@@ -1,0 +1,40 @@
+# AiCube-ISP 6.97C 配置族模板
+# 配置族：0x06，示例型号：STC89C516RD/LV516RD
+# 支持型号：STC89C516RD/LV516RD
+# 连接接口：UART ISP 用 "serial" 或 "link1d"；本族型号不支持原生 USB ISP。
+# AiCube 内置 IRC 预置频率：22118400, 24000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 44236800, 45158400
+# IRC 输入框候选频率：22118400, 24000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 44236800, 45158400
+# IRC 频率可直接填写 Hz；上面两组列表分别对应 USB 自动选择预置值和用户输入候选值。
+# 若本族同时支持串口动态校准，输入频率范围可能大于 USB 自动选择预置表；以本族实际界面为准。
+#
+# 下面的硬件选项已经填入默认值，按需修改或删除即可。
+# 以上为 AiCube 的接口说明。stc-isp 实际写入支持请查 --list-models。
+# 只下载程序、保留当前硬件选项时可设 modify_hardware_options = false。
+
+model = "STC89C516RD/LV516RD"
+if = "serial"
+# 仅用于 if = "link1d"：true 由探针断电上电；false 用 port 指定 UART1，手动上电。
+link1d_auto_power = true
+# 普通串口或 Link1D 手动上电时填写端口，例如 COM3 或 /dev/ttyUSB0。
+port = ""
+image = "firmware.hex"
+
+[hardware]
+# modify_hardware_options
+# 作用：本次下载修改硬件选项。
+# 可选值：true=修改，false=保留当前配置。
+# 默认：true
+modify_hardware_options = true
+
+# cpu_6t_enabled
+# 作用：使用 6T 双倍速模式。
+# 可选值：true=6T，false=12T。
+# 默认：false
+cpu_6t_enabled = false
+
+# flash_blank_value
+# 作用：Flash 空白区域的填充值。
+# 可选值：0x00=填充 00，0xFF=填充 FF。
+# 默认：0xFF
+flash_blank_value = 0xFF
+

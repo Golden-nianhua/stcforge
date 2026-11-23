@@ -1,0 +1,124 @@
+# AiCube-ISP 6.97C 配置族模板
+# 配置族：0x3B，示例型号：AI8G2K16S2
+# 支持型号：AI8G2K16S2、AI8G2K32S2、AI8G2K48S2、AI8G2K60S2、AI8G2K64S2、STC8G2K16S2、STC8G2K32S2、STC8G2K48S2、STC8G2K60S2、STC8G2K64S2
+# 连接接口：UART ISP 用 "serial" 或 "link1d"；本族型号不支持原生 USB ISP。
+# AiCube 内置 IRC 预置频率：22118400, 24000000, 20000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 45000000
+# IRC 输入框候选频率：22118400, 24000000, 20000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 45000000
+# IRC 频率可直接填写 Hz；上面两组列表分别对应 USB 自动选择预置值和用户输入候选值。
+# 若本族同时支持串口动态校准，输入频率范围可能大于 USB 自动选择预置表；以本族实际界面为准。
+#
+# 下面的硬件选项已经填入默认值，按需修改或删除即可。
+# 以上为 AiCube 的接口说明。stc-isp 实际写入支持请查 --list-models。
+# 只下载程序、保留当前硬件选项时可设 modify_hardware_options = false。
+
+model = "AI8G2K16S2"
+if = "serial"
+# 仅用于 if = "link1d"：true 由探针断电上电；false 用 port 指定 UART1，手动上电。
+link1d_auto_power = true
+# 普通串口或 Link1D 手动上电时填写端口，例如 COM3 或 /dev/ttyUSB0。
+port = ""
+image = "firmware.hex"
+
+[hardware]
+# modify_hardware_options
+# 作用：本次下载修改硬件选项。
+# 可选值：true=修改，false=保留当前配置。
+# 默认：true
+modify_hardware_options = true
+
+# irc_adjust_mode
+# 作用：IRC 调节模式。
+# 可选值：dynamic=总是动态调节，internal_preset=使用内部预置频率，last_trim=使用上一次调节后的频率。
+# 默认：dynamic
+irc_adjust_mode = "dynamic"
+
+# irc_hz
+# 作用：动态调节时的目标 IRC 频率；选择内部预置或上一次调节时忽略。
+# 可选值：填写顶部列出的频率值，单位 Hz；选择内置预置或上次调节时忽略此值。
+# 默认：24000000
+irc_hz = 24000000
+
+# oscillator_gain_high
+# 作用：振荡器使用高放大增益。
+# 可选值：true=高增益，false=低增益。
+# 默认：true
+oscillator_gain_high = true
+
+# por_reset_delay_long
+# 作用：上电复位使用较长延时。
+# 可选值：true=较长延时，false=普通延时。
+# 默认：true
+por_reset_delay_long = true
+
+# reset_pin_as_io
+# 作用：复位脚用作 I/O 口。
+# 可选值：true=用作 I/O，false=保持复位脚。
+# 默认：true
+reset_pin_as_io = true
+
+# low_voltage_reset_enabled
+# 作用：允许低压复位并禁止低压中断。
+# 可选值：true=允许低压复位，false=不允许。
+# 默认：true
+low_voltage_reset_enabled = true
+
+# low_voltage_threshold
+# 作用：低压检测门槛电压。
+# 可选值：0、1、2、3 四档固定低压检测值。
+# 默认：0
+low_voltage_threshold = 0
+
+# watchdog_por_enabled
+# 作用：上电复位时由硬件自动启动看门狗。
+# 可选值：true=自动启动，false=不自动启动。
+# 默认：false
+watchdog_por_enabled = false
+
+# watchdog_prescale
+# 作用：看门狗定时器分频系数。
+# 可选值：2、4、8、16、32、64、128 或 256。
+# 默认：256
+watchdog_prescale = 256
+
+# watchdog_stop_idle
+# 作用：空闲状态时停止看门狗计数。
+# 可选值：true=停止，false=继续计数。
+# 默认：true
+watchdog_stop_idle = true
+
+# eeprom_erase_enabled
+# 作用：下次下载用户程序时擦除用户 EEPROM 区。
+# 可选值：true=擦除，false=保留。
+# 默认：true
+eeprom_erase_enabled = true
+
+# usb_isp_enabled
+# 作用：下次下载时使能 USB-ISP 模式。
+# 可选值：true=使能，false=禁用。
+# 默认：true
+usb_isp_enabled = true
+
+# cold_start_p32_p33_required
+# 作用：下次冷启动时要求 P3.2/P3.3 同时为低电平才能下载。
+# 可选值：true=要求，false=不要求。
+# 默认：false
+cold_start_p32_p33_required = false
+
+# append_test_parameters
+# 作用：在程序区末尾追加芯片测试参数（占用程序 Flash）。
+# 可选值：true=追加，false=不追加。
+# 默认：false
+append_test_parameters = false
+
+# flash_blank_value
+# 作用：Flash 空白区域的填充值。
+# 可选值：0x00=填充 00，0xFF=填充 FF。
+# 默认：0xFF
+flash_blank_value = 0xFF
+
+# 仿真方式
+# 作用：选择一种仿真方式。制作会擦除程序区；使用 --make-simulation 和单独的制作配置。
+# 可选值：none=不制作仿真、uart=串口仿真。
+# 默认：none
+simulation_mode = "none"
+

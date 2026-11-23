@@ -1,0 +1,100 @@
+# AiCube-ISP 6.97C 配置族模板
+# 配置族：0x0D，示例型号：STC11F08XE
+# 支持型号：STC11F08XE、STC11F16XE、STC11F20XE、STC11F32XE、STC11F40XE、STC11F48XE、STC11F52XE、STC11F56XE、STC11F60XE、STC11F08X、STC11F16X、STC11F20X、STC11F32X、STC11F40X、STC11F48X、STC11F52X、STC11F56X、STC11F60X、STC11F08、STC11F16、STC11F20、STC11F32、STC11F40、STC11F48、STC11F52、STC11F56、STC11F60、IAP11F08XE、IAP11F16XE、IAP11F20XE、IAP11F32XE、IAP11F40XE、IAP11F48XE、IAP11F52XE、IAP11F56XE、IAP11F60XE、IAP11F08X、IAP11F16X、IAP11F20X、IAP11F32X、IAP11F40X、IAP11F48X、IAP11F52X、IAP11F56X、IAP11F60X、IAP11F62X、IAP11F08、IAP11F16、IAP11F20、IAP11F32、IAP11F40、IAP11F48、IAP11F52、IAP11F56、IAP11F60、IAP11F62、STC11L08XE、STC11L16XE、STC11L20XE、STC11L32XE、STC11L40XE、STC11L48XE、STC11L52XE、STC11L56XE、STC11L60XE、STC11L08X、STC11L16X、STC11L20X、STC11L32X、STC11L40X、STC11L48X、STC11L52X、STC11L56X、STC11L60X、STC11L08、STC11L16、STC11L20、STC11L32、STC11L40、STC11L48、STC11L52、STC11L56、STC11L60、IAP11L08XE、IAP11L16XE、IAP11L20XE、IAP11L32XE、IAP11L40XE、IAP11L48XE、IAP11L52XE、IAP11L56XE、IAP11L60XE、IAP11L08X、IAP11L16X、IAP11L20X、IAP11L32X、IAP11L40X、IAP11L48X、IAP11L52X、IAP11L56X、IAP11L60X、IAP11L62X、IAP11L08、IAP11L16、IAP11L20、IAP11L32、IAP11L40、IAP11L48、IAP11L52、IAP11L56、IAP11L60、IAP11L62
+# 连接接口：UART ISP 用 "serial" 或 "link1d"；本族型号不支持原生 USB ISP。
+# AiCube 内置 IRC 预置频率：22118400, 24000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 44236800, 45158400
+# IRC 输入框候选频率：22118400, 24000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 44236800, 45158400
+# IRC 频率可直接填写 Hz；上面两组列表分别对应 USB 自动选择预置值和用户输入候选值。
+# 若本族同时支持串口动态校准，输入频率范围可能大于 USB 自动选择预置表；以本族实际界面为准。
+#
+# 下面的硬件选项已经填入默认值，按需修改或删除即可。
+# 以上为 AiCube 的接口说明。stc-isp 实际写入支持请查 --list-models。
+# 只下载程序、保留当前硬件选项时可设 modify_hardware_options = false。
+
+model = "STC11F08XE"
+if = "serial"
+# 仅用于 if = "link1d"：true 由探针断电上电；false 用 port 指定 UART1，手动上电。
+link1d_auto_power = true
+# 普通串口或 Link1D 手动上电时填写端口，例如 COM3 或 /dev/ttyUSB0。
+port = ""
+image = "firmware.hex"
+
+[hardware]
+# modify_hardware_options
+# 作用：本次下载修改硬件选项。
+# 可选值：true=修改，false=保留当前配置。
+# 默认：true
+modify_hardware_options = true
+
+# internal_irc_clock
+# 作用：系统使用内部 IRC 时钟。
+# 可选值：true=内部 IRC，false=外部时钟。
+# 默认：false
+internal_irc_clock = false
+
+# oscillator_gain_high
+# 作用：振荡器使用高放大增益。
+# 可选值：true=高增益，false=低增益。
+# 默认：true
+oscillator_gain_high = true
+
+# reset_pin_as_io
+# 作用：复位脚用作 I/O 口。
+# 可选值：true=用作 I/O，false=保持复位脚。
+# 默认：false
+reset_pin_as_io = false
+
+# low_voltage_threshold
+# 作用：低压检测门槛电压。
+# 可选值：0=低门槛电压，1=高门槛电压。
+# 默认：1
+low_voltage_threshold = 1
+
+# por_reset_delay_long
+# 作用：上电复位使用较长延时。
+# 可选值：true=较长延时，false=普通延时。
+# 默认：true
+por_reset_delay_long = true
+
+# oscillator_stable_delay
+# 作用：等待振荡器稳定的时钟数。
+# 可选值：4096、8192、16384 或 32768 个时钟。
+# 默认：32768
+oscillator_stable_delay = 32768
+
+# watchdog_por_enabled
+# 作用：上电复位时由硬件自动启动看门狗。
+# 可选值：true=自动启动，false=不自动启动。
+# 默认：false
+watchdog_por_enabled = false
+
+# watchdog_prescale
+# 作用：看门狗定时器分频系数。
+# 可选值：2、4、8、16、32、64、128 或 256。
+# 默认：256
+watchdog_prescale = 256
+
+# watchdog_stop_idle
+# 作用：空闲状态时停止看门狗计数。
+# 可选值：true=停止，false=继续计数。
+# 默认：true
+watchdog_stop_idle = true
+
+# eeprom_erase_enabled
+# 作用：下次下载用户程序时擦除用户 EEPROM 区。
+# 可选值：true=擦除，false=保留。
+# 默认：false
+eeprom_erase_enabled = false
+
+# cold_start_p10_p11_required
+# 作用：下次冷启动时要求 P1.0/P1.1 同时为低电平才能下载。
+# 可选值：true=要求，false=不要求。
+# 默认：false
+cold_start_p10_p11_required = false
+
+# flash_blank_value
+# 作用：Flash 空白区域的填充值。
+# 可选值：0x00=填充 00，0xFF=填充 FF。
+# 默认：0xFF
+flash_blank_value = 0xFF
+

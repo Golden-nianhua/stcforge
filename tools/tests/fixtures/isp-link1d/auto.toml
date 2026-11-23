@@ -1,0 +1,3 @@
+model = "STC32G144K246"
+if = "link1d"
+link1d_auto_power = false

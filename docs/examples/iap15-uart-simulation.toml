@@ -1,0 +1,13 @@
+# 旧 IAP15F/L2K61S2、IAP15W4K58S4（含 Student）及 IAP15W4K61S4 的串口仿真。
+# 制作会擦除程序区，可能同时擦除 EEPROM；不需要提供用户程序。
+# 使用 stc-isp --config examples/iap15-uart-simulation.toml，首次可加 --dry-run 校验。
+model = "IAP15F2K61S2"
+if = "serial" # 也可用 "link1d"；使用自动供电时不必填 port。
+port = "COM3"
+make_simulation = true
+# 指向从本地 AiCube-ISP 6.97C 提取的原版 res2.bin、res6.bin、res30.bin、res31.bin。
+# 不同型号只读取 res2.bin 和自身的监控资源；可用 --simulation-resources 覆盖。
+simulation_resources = "research/aicube-isp-v6.97a/resources"
+
+[hardware]
+simulation_mode = "uart"

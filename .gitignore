@@ -1,0 +1,16 @@
+.venv/
+.cache/
+dist/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.idea/
+core.*
+
+# Local vendor resources, raw disassembly and capture exports.
+/docs/research/*/resources/
+/docs/research/*/capture-*/
+/docs/research/*/commands-*/
+/docs/research/*/*.asm
+/docs/research/*/dis-*.txt
+/docs/research/*/*.pcapng

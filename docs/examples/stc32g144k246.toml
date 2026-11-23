@@ -1,0 +1,43 @@
+# stc-isp 配置示例
+# 执行：stc-isp.exe --config stc32g144k246.toml
+# image 可以同时包含 FF0000..FFFFFF 程序区和 FC2800 起的 EEPROM 区。
+
+model = "STC32G144K246"
+# "usb" 使用芯片原生 USB ISP，"serial" 使用串口，"link1d" 使用 Link1D 转接 UART1。
+if = "usb"
+# 仅 if = "link1d" 生效：true 由探针重新上电；false 使用 port 指定的 UART1 串口，手动重新上电。
+link1d_auto_power = true
+image = "build/Debug/firmware/firmware.hex"
+timeout_ms = 2000
+
+[hardware]
+cpu_mode = 32
+oscillator_gain_high = true
+watchdog_por_enabled = false
+watchdog_stop_idle = true
+watchdog_prescale = 128
+eeprom_erase_enabled = false
+eeprom_disabled = false
+usb_isp_enabled = true
+usb_simulation_enabled = false
+swd_enabled = false
+uart1_remap = false
+irc_hz = 24000000
+irc_adjust_mode = "last_trim"
+
+# 应用固件自己实现命令并跳转 ISP 时可在下载前发送应用侧 HID 命令。
+# USB-HID 应用侧复位
+# reset_transport = "hid"
+# reset_command = "hex:4053544349535023"
+# reset_vid = 0x1234
+# reset_pid = 0x5678
+#
+# USB-CDC 或普通串口应用侧复位。AiCube-ISP 的串口路径会设置 8 数据位，
+# 校验位、停止位、DTR 和 RTS 按这些字段写入。
+# reset_transport = "serial"
+# reset_port = "COM5"
+# reset_baud = 115200
+# reset_parity = "none"
+# reset_stop_bits = 1
+# reset_dtr = false
+# reset_rts = false

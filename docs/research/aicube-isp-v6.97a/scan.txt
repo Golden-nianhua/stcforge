@@ -1,0 +1,173 @@
+005020f4 KERNEL32.dll!ReadFile                  0040be7b 0040bf3d 0043c8cf 0043c997 0043cac4 0044baf5 0044bd1c 004633a3 004731b7 004b9ef2 004b9f27 004ba027
+00502104 KERNEL32.dll!WriteFile                 0040bc42 0043cd59 0043cdfe 0043ce60 0043ce7f 0044bc76 0044bee2 004632ca 00470c61 004a402b 004a40ca 004bb188
+0050211c KERNEL32.dll!GetCommState              0040ba5f 0043d3c3 0043dc1c 00447c09 00448fb9 0044e8b9 00463115 004a3f4c 004bfddc 004db263 004dc326 004e7e9c
+00502120 KERNEL32.dll!SetCommState              0040ba8b 0043d3da 0043dc5f 00447c1a 00448fea 0044e8bf 0046317e 004a3fac 004bfec3 004dc402 004e7ecc 004e915e
+00502124 KERNEL32.dll!SetCommTimeouts           0040bab4 0043dc8a 00449015 004631ad 004a3fd9 004db251 004e7ef9 004e9158
+00502b58 SETUPAPI.dll!SetupDiGetDeviceRegistryPropertyA 00462daa 004aec8d 004e0870 004e96da
+00502b5c SETUPAPI.dll!SetupDiDestroyDeviceInfoList 00462fbd 0047295d 004af171 004e0a83 004e7dd7 004e96d4
+00502b60 SETUPAPI.dll!SetupDiGetClassDevsA      00462d46 004726c9 004aec15 004e080a 004e7c06 004e96e6
+00502b64 SETUPAPI.dll!SetupDiGetDeviceInterfaceDetailA 00472709 0047273c 004e7c3f 004e96ec
+00502b68 SETUPAPI.dll!SetupDiEnumDeviceInfo     00462d59 00462f90 004aec35 004af140 004e081f 004e0a56 004e96e0
+00502b6c SETUPAPI.dll!SetupDiEnumDeviceInterfaces 004726ea 00472948 004e7c2a 004e7d34 004e96f2
+00502094 HID.DLL!HidD_GetFeature                004e96f8
+00502098 HID.DLL!HidD_SetFeature                004e96fe
+0050209c HID.DLL!HidD_FreePreparsedData         004e9704
+005020a0 HID.DLL!HidP_GetSpecificValueCaps      004e970a
+005020a4 HID.DLL!HidP_GetSpecificButtonCaps     004e9710
+005020a8 HID.DLL!HidP_GetCaps                   004e9716
+005020ac HID.DLL!HidD_GetPreparsedData          004e971c
+005020b0 HID.DLL!HidD_GetInputReport            004e9722
+005020b4 HID.DLL!HidD_SetOutputReport           004e9728
+005020b8 HID.DLL!HidD_GetHidGuid                004e972e
+005020bc HID.DLL!HidD_GetProductString          004e9734
+005020c0 HID.DLL!HidD_GetManufacturerString     004e973a
+005020c4 HID.DLL!HidD_GetAttributes             004e9740
+005020c8 HID.DLL!HidD_SetNumInputBuffers        004e9746
+STC32G144K246
+  gbk      00550b74  
+  gbk      0055b0a4  
+  gbk      0055c7f8  0048021d
+  gbk      0055c80c  00480218
+  gbk      0057342c  
+  gbk      00573448  
+  gbk      00573468  
+  gbk      00573484  
+  gbk      00589cfe  
+  gbk      00589d29  
+  gbk      00589d72  
+  gbk      00589d9d  
+  gbk      0058aabe  
+  gbk      0058aadd  
+  gbk      0058ab16  
+  gbk      0058ab39  
+  gbk      0058d9eb  
+  gbk      0058da5e  
+  gbk      0058e69c  
+  gbk      0058e6e4  
+  gbk      0058ee51  
+总是动态调节IRC频率
+  gbk      0056fb50  
+  gbk      0057f21c  
+内部预置
+  gbk      0056fb27  
+  gbk      00578368  
+  gbk      0057f285  
+  gbk      0057f2b9  
+动态调节
+  gbk      0056fb54  
+  gbk      005783a3  
+  gbk      0057f220  
+  gbk      0057f2a4  
+  gbk      0057f334  
+正在调节
+调节内部
+不支持
+  gbk      00567798  
+  gbk      005677d2  
+  gbk      00567808  
+  gbk      005685d1  
+  gbk      005686bd  
+  gbk      0057a938  
+  gbk      00590163  
+  gbk      005903cc  
+  gbk      00590dcc  
+  gbk      00592c08  
+  gbk      00592c83  
+正在设置硬件选项
+  gbk      00592b98  
+正在擦除
+  gbk      00592dec  
+正在下载
+  gbk      00588540  
+  gbk      0058fe3c  
+  gbk      00592bcc  
+下载口令
+  gbk      00566cc4  
+  gbk      0056b488  
+  gbk      0057483e  
+  gbk      00574886  
+  gbk      00574895  
+  gbk      005748af  
+  gbk      005750c0  
+  gbk      00575108  
+  gbk      0057d028  
+  gbk      0057d038  
+  gbk      005800a4  
+  gbk      005800e0  
+  gbk      0058ba09  
+  gbk      00591b28  
+  gbk      00591b84  
+  gbk      00592dbe  
+用户系统区
+  gbk      0056ccc2  
+  gbk      0056ccde  
+  gbk      0056cd34  
+  gbk      0056cd64  
+  gbk      0056cdb2  
+  gbk      0056cdea  
+  gbk      0056ce07  
+  gbk      0056ce24  
+  gbk      0056ce42  
+  gbk      0056ce7e  
+  gbk      0056cf48  
+  gbk      00586816  
+  gbk      00586840  
+  gbk      0058685c  
+  gbk      0058686f  
+  gbk      005868b6  
+  gbk      005868d0  
+USB-Writer
+  gbk      005509de  
+  gbk      005509ec  
+  gbk      0055b800  00448573
+  gbk      00564b64  0049ec2a 0049efb5 004a00e4 004a0611 004a0a41 004b2ee8
+  gbk      0056536c  
+  gbk      00565380  
+  gbk      0057d3b7  
+  gbk      0058fa01  
+  gbk      0058fae8  
+正在检测
+  gbk      00593584  
+自定义
+  gbk      0055752a  
+  gbk      0056a9fe  
+  gbk      0056aa6b  
+  gbk      005773d8  
+  gbk      005773f4  
+  gbk      0057752c  
+  gbk      0057a14c  
+  gbk      0057df8f  
+  gbk      0057e41a  
+  gbk      0057e46a  
+  gbk      0057eb52  
+  gbk      0058026c  
+  gbk      00582f6c  
+  gbk      0058300c  
+  gbk      005835e4  
+  gbk      00584278  
+  gbk      00584327  
+  gbk      00584980  
+  gbk      0058844c  
+  gbk      0058856c  
+  gbk      00589918  
+校准
+  gbk      00567558  
+  gbk      00575a8c  
+  gbk      00586aeb  
+  gbk      00586b0d  
+  gbk      00586b28  
+  gbk      00586ba3  
+ISP工作频率
+  gbk      0057f618  
+  gbk      0057f6b8  
+  gbk      00591d54  
+  5529600 
+  6000000 0043d56a 0043d5f2 0043f090
+ 11059200 0043c354 004c0a69 004c0a6e
+ 18432000 00519bb8
+ 24000000 0043d621 0043f0b4 0044c6ff 0044c70f 0048e96a 00519bb0 00519bd8 00519c28 00519c78 00519cc8
+ 45158400 00519c68 00519c88 00519cd8
+ 49152000 
+ 50803200 00519c98 00519ce8
+ 55296000 
+ 60000000 00519cb0 00519d00

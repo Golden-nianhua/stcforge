@@ -1,0 +1,88 @@
+# AiCube-ISP 6.97C 配置族模板
+# 配置族：0x0A，示例型号：STC12C5201AD
+# 支持型号：STC12C5201AD、STC12C5202AD、STC12C5203AD、STC12C5204AD、STC12C5205AD、STC12C5206AD、STC12C5201PWM、STC12C5202PWM、STC12C5203PWM、STC12C5204PWM、STC12C5205PWM、STC12C5206PWM、STC12C5201、STC12C5202、STC12C5203、STC12C5204、STC12C5205、STC12C5206、STC12LE5201AD、STC12LE5202AD、STC12LE5203AD、STC12LE5204AD、STC12LE5205AD、STC12LE5206AD、STC12LE5201PWM、STC12LE5202PWM、STC12LE5203PWM、STC12LE5204PWM、STC12LE5205PWM、STC12LE5206PWM、STC12LE5201、STC12LE5202、STC12LE5203、STC12LE5204、STC12LE5205、STC12LE5206
+# 连接接口：UART ISP 用 "serial" 或 "link1d"；本族型号不支持原生 USB ISP。
+# AiCube 内置 IRC 预置频率：22118400, 24000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 44236800, 45158400
+# IRC 输入框候选频率：22118400, 24000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 44236800, 45158400
+# IRC 频率可直接填写 Hz；上面两组列表分别对应 USB 自动选择预置值和用户输入候选值。
+# 若本族同时支持串口动态校准，输入频率范围可能大于 USB 自动选择预置表；以本族实际界面为准。
+#
+# 下面的硬件选项已经填入默认值，按需修改或删除即可。
+# 以上为 AiCube 的接口说明。stc-isp 实际写入支持请查 --list-models。
+# 只下载程序、保留当前硬件选项时可设 modify_hardware_options = false。
+
+model = "STC12C5201AD"
+if = "serial"
+# 仅用于 if = "link1d"：true 由探针断电上电；false 用 port 指定 UART1，手动上电。
+link1d_auto_power = true
+# 普通串口或 Link1D 手动上电时填写端口，例如 COM3 或 /dev/ttyUSB0。
+port = ""
+image = "firmware.hex"
+
+[hardware]
+# modify_hardware_options
+# 作用：本次下载修改硬件选项。
+# 可选值：true=修改，false=保留当前配置。
+# 默认：true
+modify_hardware_options = true
+
+# internal_irc_clock
+# 作用：系统使用内部 IRC 时钟。
+# 可选值：true=内部 IRC，false=外部时钟。
+# 默认：false
+internal_irc_clock = false
+
+# oscillator_gain_high
+# 作用：振荡器使用高放大增益。
+# 可选值：true=高增益，false=低增益。
+# 默认：true
+oscillator_gain_high = true
+
+# reset2_voltage_reset_enabled
+# 作用：RESET2 电压低于 1.33V 时复位芯片。
+# 可选值：true=启用，false=禁用。
+# 默认：false
+reset2_voltage_reset_enabled = false
+
+# por_reset_delay_long
+# 作用：上电复位使用较长延时。
+# 可选值：true=较长延时，false=普通延时。
+# 默认：true
+por_reset_delay_long = true
+
+# watchdog_por_enabled
+# 作用：上电复位时由硬件自动启动看门狗。
+# 可选值：true=自动启动，false=不自动启动。
+# 默认：false
+watchdog_por_enabled = false
+
+# watchdog_prescale
+# 作用：看门狗定时器分频系数。
+# 可选值：2、4、8、16、32、64、128 或 256。
+# 默认：256
+watchdog_prescale = 256
+
+# watchdog_stop_idle
+# 作用：空闲状态时停止看门狗计数。
+# 可选值：true=停止，false=继续计数。
+# 默认：true
+watchdog_stop_idle = true
+
+# eeprom_erase_enabled
+# 作用：下次下载用户程序时擦除用户 EEPROM 区。
+# 可选值：true=擦除，false=保留。
+# 默认：false
+eeprom_erase_enabled = false
+
+# cold_start_p10_p11_required
+# 作用：下次冷启动时要求 P1.0/P1.1 同时为低电平才能下载。
+# 可选值：true=要求，false=不要求。
+# 默认：false
+cold_start_p10_p11_required = false
+
+# flash_blank_value
+# 作用：Flash 空白区域的填充值。
+# 可选值：0x00=填充 00，0xFF=填充 FF。
+# 默认：0xFF
+flash_blank_value = 0xFF
+

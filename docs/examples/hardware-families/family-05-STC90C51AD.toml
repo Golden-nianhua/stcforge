@@ -1,0 +1,76 @@
+# AiCube-ISP 6.97C 配置族模板
+# 配置族：0x05，示例型号：STC90C51AD
+# 支持型号：STC90C51AD、STC90C52AD、STC90C54AD、STC90C55AD、STC90C58AD、STC90C510AD、STC90C512AD、STC90C513AD、STC90C514AD、STC90C516AD、STC90LE51AD、STC90LE52AD、STC90LE54AD、STC90LE55AD、STC90LE58AD、STC90LE510AD、STC90LE512AD、STC90LE513AD、STC90LE514AD、STC90LE516AD
+# 连接接口：UART ISP 用 "serial" 或 "link1d"；本族型号不支持原生 USB ISP。
+# AiCube 内置 IRC 预置频率：22118400, 24000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 44236800, 45158400
+# IRC 输入框候选频率：22118400, 24000000, 27000000, 30000000, 33177600, 35000000, 36864000, 40000000, 44236800, 45158400
+# IRC 频率可直接填写 Hz；上面两组列表分别对应 USB 自动选择预置值和用户输入候选值。
+# 若本族同时支持串口动态校准，输入频率范围可能大于 USB 自动选择预置表；以本族实际界面为准。
+#
+# 下面的硬件选项已经填入默认值，按需修改或删除即可。
+# 以上为 AiCube 的接口说明。stc-isp 实际写入支持请查 --list-models。
+# 只下载程序、保留当前硬件选项时可设 modify_hardware_options = false。
+
+model = "STC90C51AD"
+if = "serial"
+# 仅用于 if = "link1d"：true 由探针断电上电；false 用 port 指定 UART1，手动上电。
+link1d_auto_power = true
+# 普通串口或 Link1D 手动上电时填写端口，例如 COM3 或 /dev/ttyUSB0。
+port = ""
+image = "firmware.hex"
+
+[hardware]
+# modify_hardware_options
+# 作用：本次下载修改硬件选项。
+# 可选值：true=修改，false=保留当前配置。
+# 默认：true
+modify_hardware_options = true
+
+# cpu_6t_enabled
+# 作用：使用 6T 双倍速模式。
+# 可选值：true=6T，false=12T。
+# 默认：false
+cpu_6t_enabled = false
+
+# oscillator_gain_reduced
+# 作用：降低振荡器的放大增益以降低功耗。
+# 可选值：true=降低增益，false=不降低增益。
+# 默认：false
+oscillator_gain_reduced = false
+
+# watchdog_poweroff_only
+# 作用：看门狗只有断电后才能停止。
+# 可选值：true=只有断电停止，false=任何复位都可停止。
+# 默认：false
+watchdog_poweroff_only = false
+
+# xram_enabled
+# 作用：使用 MCU 内部扩展 RAM。
+# 可选值：true=可用，false=不可用。
+# 默认：true
+xram_enabled = true
+
+# ale_as_p45
+# 作用：ALE 脚用作 P4.5。
+# 可选值：true=用作 P4.5，false=保持 ALE。
+# 默认：false
+ale_as_p45 = false
+
+# eeprom_erase_enabled
+# 作用：下次下载用户程序时擦除用户 EEPROM 区。
+# 可选值：true=擦除，false=保留。
+# 默认：false
+eeprom_erase_enabled = false
+
+# cold_start_p10_p11_required
+# 作用：下次冷启动时要求 P1.0/P1.1 同时为低电平才能下载。
+# 可选值：true=要求，false=不要求。
+# 默认：false
+cold_start_p10_p11_required = false
+
+# flash_blank_value
+# 作用：Flash 空白区域的填充值。
+# 可选值：0x00=填充 00，0xFF=填充 FF。
+# 默认：0xFF
+flash_blank_value = 0xFF
+

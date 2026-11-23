@@ -1,0 +1,154 @@
+serial frame TX          0043CEA0 0043D0D0   368 0 structural diffs
+serial frame RX          0043D010 0043D240   624 3 structural diffs
+  replace 1/4 43d264:mov dl, al -> 43d494:mov edx, 0xe90043d2; 43d499:rol byte ptr [ebx], cl; 43d49c:psrlq mm0, qword ptr [ebx]
+  replace 7/2 43d267:add byte ptr [ecx - 0x20ffbc30], bh; 43d26d:rol byte ptr [ebx], 1; 43d270:add ecx, edx -> 43d4a3:add byte ptr [ecx - 0x3effbc2d], cl; 43d4a9:rol dword ptr [ebx], cl
+  insert 0/1  -> 43d4af:nop 
+status decode            0043DFC0 0043E1F0  2032 20 structural diffs
+  replace 1/1 43dfcf:lea esi, [ebp + 0x6ba] -> 43e1ff:lea esi, [ebp + 0x71e]
+  replace 1/1 43dfd7:lea edi, [ebp + 0x624] -> 43e207:lea edi, [ebp + 0x688]
+  replace 2/2 43dff5:mov al, byte ptr [ebp + 0x6cc]; 43dffb:mov byte ptr [ebp + 0x664], cl -> 43e225:mov al, byte ptr [ebp + 0x730]; 43e22b:mov byte ptr [ebp + 0x6c8], cl
+  replace 1/1 43e003:mov cl, byte ptr [ebp + 0x6cb] -> 43e233:mov cl, byte ptr [ebp + 0x72f]
+  replace 1/1 43e027:mov dl, byte ptr [ebp + 0x6cd] -> 43e257:mov dl, byte ptr [ebp + 0x731]
+  replace 2/2 43e059:mov ch, byte ptr [ebp + 0x6ce]; 43e05f:mov cl, byte ptr [ebp + 0x6cf] -> 43e289:mov ch, byte ptr [ebp + 0x732]; 43e28f:mov cl, byte ptr [ebp + 0x733]
+  replace 1/1 43e21d:mov cl, byte ptr [ebp + 0x6d0] -> 43e44d:mov cl, byte ptr [ebp + 0x734]
+preserve IRC             0043E7B0 0043E9E0   336 8 structural diffs
+  replace 5/5 43e7e5:mov al, byte ptr [esi + 0x628]; 43e7eb:mov dh, byte ptr [esi + 0x631]; 43e7f1:mov byte ptr [esi + 0x6b5], 0x40 -> 43ea15:mov al, byte ptr [esi + 0x68c]; 43ea1b:mov dh, byte ptr [esi + 0x695]; 43ea21:mov byte ptr [esi + 0x719], 0x40
+  replace 5/5 43e821:mov dl, byte ptr [esi + 0x629]; 43e827:mov cl, byte ptr [esi + 0x62a]; 43e82d:mov byte ptr [esi + 0x6b6], dl -> 43ea51:mov dl, byte ptr [esi + 0x68d]; 43ea57:mov cl, byte ptr [esi + 0x68e]; 43ea5d:mov byte ptr [esi + 0x71a], dl
+  replace 3/3 43e841:mov ch, byte ptr [esi + 0x625]; 43e847:mov byte ptr [esi + 0x6b8], dl; 43e84d:mov cl, byte ptr [esi + 0x626] -> 43ea71:mov ch, byte ptr [esi + 0x689]; 43ea77:mov byte ptr [esi + 0x71c], dl; 43ea7d:mov cl, byte ptr [esi + 0x68a]
+  replace 1/1 43e855:mov dh, byte ptr [esi + 0x627] -> 43ea85:mov dh, byte ptr [esi + 0x68b]
+  replace 2/2 43e86c:mov al, byte ptr [esi + 0x64a]; 43e872:mov cl, byte ptr [esi + 0x64b] -> 43ea9c:mov al, byte ptr [esi + 0x6ae]; 43eaa2:mov cl, byte ptr [esi + 0x6af]
+  replace 2/2 43e87a:mov byte ptr [esi + 0x6b6], al; 43e880:mov dh, byte ptr [esi + 0x62c] -> 43eaaa:mov byte ptr [esi + 0x71a], al; 43eab0:mov dh, byte ptr [esi + 0x690]
+  replace 4/4 43e888:mov dl, byte ptr [esi + 0x62d]; 43e88e:mov ah, byte ptr [esi + 0x62e]; 43e894:mov al, byte ptr [esi + 0x62f] -> 43eab8:mov dl, byte ptr [esi + 0x691]; 43eabe:mov ah, byte ptr [esi + 0x692]; 43eac4:mov al, byte ptr [esi + 0x693]
+preset IRC match         0043E900 0043EB30  1168 29 structural diffs
+  replace 1/1 43e917:mov byte ptr [esi + 0x6ae], bl -> 43eb47:mov byte ptr [esi + 0x712], bl
+  replace 5/5 43e920:mov byte ptr [esi + 0x6af], bl; 43e926:mov byte ptr [esi + 0x6b0], bl; 43e92c:mov byte ptr [esi + 0x6b1], bl -> 43eb50:mov byte ptr [esi + 0x713], bl; 43eb56:mov byte ptr [esi + 0x714], bl; 43eb5c:mov byte ptr [esi + 0x715], bl
+  replace 1/1 43e9ee:mov dword ptr [esi + 0x6a4], edx -> 43ec1e:mov dword ptr [esi + 0x708], edx
+  replace 1/1 43e9fb:mov byte ptr [esi + 0x6a8], al -> 43ec2b:mov byte ptr [esi + 0x70c], al
+  replace 1/1 43ea14:mov byte ptr [esi + 0x6ac], cl -> 43ec44:mov byte ptr [esi + 0x710], cl
+  replace 2/2 43ea20:mov byte ptr [esi + 0x6ae], al; 43ea26:mov byte ptr [esi + 0x6aa], dl -> 43ec50:mov byte ptr [esi + 0x712], al; 43ec56:mov byte ptr [esi + 0x70e], dl
+  replace 1/1 43ea33:mov byte ptr [esi + 0x6a9], dl -> 43ec63:mov byte ptr [esi + 0x70d], dl
+preset IRC output        0043ED90 0043EFC0   384 10 structural diffs
+  replace 1/1 43edc3:mov al, byte ptr [esi + 0x6af] -> 43eff3:mov al, byte ptr [esi + 0x713]
+  replace 1/1 43edd1:mov cl, byte ptr [esi + 0x6ab] -> 43f001:mov cl, byte ptr [esi + 0x70f]
+  replace 7/7 43edd9:mov dl, byte ptr [esi + 0x6a9]; 43eddf:mov al, byte ptr [edx + esi + 0x624]; 43ede6:mov byte ptr [esi + 0x6b7], cl -> 43f009:mov dl, byte ptr [esi + 0x70d]; 43f00f:mov al, byte ptr [edx + esi + 0x688]; 43f016:mov byte ptr [esi + 0x71b], cl
+  replace 1/1 43ee22:mov al, byte ptr [esi + 0x6b0] -> 43f052:mov al, byte ptr [esi + 0x714]
+  replace 2/2 43ee35:mov dl, byte ptr [eax + esi + 0x624]; 43ee3c:mov al, byte ptr [esi + 0x6b1] -> 43f065:mov dl, byte ptr [eax + esi + 0x688]; 43f06c:mov al, byte ptr [esi + 0x715]
+  replace 2/2 43ee46:mov al, byte ptr [esi + 0x6b3]; 43ee4c:mov byte ptr [esi + 0x6b7], al -> 43f076:mov al, byte ptr [esi + 0x717]; 43f07c:mov byte ptr [esi + 0x71b], al
+  replace 2/2 43ee57:mov cl, byte ptr [esi + 0x6b2]; 43ee5d:mov byte ptr [esi + 0x6b7], cl -> 43f087:mov cl, byte ptr [esi + 0x716]; 43f08d:mov byte ptr [esi + 0x71b], cl
+serial IRC dynamic       00440AB0 ambiguous [4457200, 4459744]
+serial IRC dispatch      004411C0 004413F0   464 1 structural diffs
+  replace 1/1 4411fe:mov edx, dword ptr [esi + 0x67c] -> 44142e:mov edx, dword ptr [esi + 0x6e0]
+UID transform            00442400 ambiguous []
+F8D1 status messages     00447040 ambiguous [4390704, 4481648, 4483184]
+config serialize         0044B530 0044B760  1344 53 structural diffs
+  replace 1/1 44b545:mov eax, dword ptr [edx + 0x67c] -> 44b775:mov eax, dword ptr [edx + 0x6e0]
+  replace 1/1 44b55a:mov eax, dword ptr [edx + 0x67c] -> 44b78a:mov eax, dword ptr [edx + 0x6e0]
+  replace 1/1 44b566:mov eax, dword ptr [edx + 0x67c] -> 44b796:mov eax, dword ptr [edx + 0x6e0]
+  replace 1/1 44b57a:mov eax, dword ptr [edx + 0x67c] -> 44b7aa:mov eax, dword ptr [edx + 0x6e0]
+  replace 1/1 44b5fd:mov ecx, dword ptr [edx + 0x67c] -> 44b82d:mov ecx, dword ptr [edx + 0x6e0]
+  replace 1/1 44b609:mov cl, byte ptr [edx + 0xf18] -> 44b839:mov cl, byte ptr [edx + 0xf7c]
+  replace 1/1 44b62f:mov eax, dword ptr [edx + 0x67c] -> 44b85f:mov eax, dword ptr [edx + 0x6e0]
+HID frame RX             0044BAB0 0044BCE0   224 0 structural diffs
+HID frame TX             0044BB90 0044BDC0   336 0 structural diffs
+native HID download      0044C580 0044C800  4016 68 structural diffs
+  replace 1/1 44c667:lea ebx, [ebp + 0xaba] -> 44c8e7:lea ebx, [ebp + 0xb1e]
+  replace 1/1 44c67a:lea esi, [ebp + 0x6ba] -> 44c8fa:lea esi, [ebp + 0x71e]
+  replace 2/2 44c6aa:mov cl, byte ptr [ebp + 0x6c7]; 44c6b0:mov byte ptr [ebp + 0x6c4], cl -> 44c92a:mov cl, byte ptr [ebp + 0x72b]; 44c930:mov byte ptr [ebp + 0x728], cl
+  replace 2/2 44c6e4:mov dl, byte ptr [ebp + 0x6c8]; 44c6ea:mov byte ptr [ebp + 0x6c2], dl -> 44c964:mov dl, byte ptr [ebp + 0x72c]; 44c96a:mov byte ptr [ebp + 0x726], dl
+  replace 2/2 44c6f2:mov al, byte ptr [ebp + 0x6c8]; 44c6f8:mov byte ptr [ebp + 0x6c5], al -> 44c972:mov al, byte ptr [ebp + 0x72c]; 44c978:mov byte ptr [ebp + 0x729], al
+  replace 1/1 44c714:mov byte ptr [ebp + 0x6c7], cl -> 44c994:mov byte ptr [ebp + 0x72b], cl
+  replace 1/1 44c722:mov byte ptr [ebp + 0x6c8], al -> 44c9a2:mov byte ptr [ebp + 0x72c], al
+alternate USB download   0044D570 0044D7F0  3488 50 structural diffs
+  replace 1/1 44d655:lea eax, [esi + 0x6ba] -> 44d8d5:lea eax, [esi + 0x71e]
+  replace 1/1 44d6b7:mov eax, dword ptr [esi + 0x67c] -> 44d937:mov eax, dword ptr [esi + 0x6e0]
+  replace 1/1 44d6e5:lea eax, [esi + 0xaba] -> 44d965:lea eax, [esi + 0xb1e]
+  replace 1/1 44d720:lea ebx, [esi + 0x6ba] -> 44d9a0:lea ebx, [esi + 0x71e]
+  replace 1/1 44d758:mov eax, dword ptr [esi + 0xf14] -> 44d9d8:mov eax, dword ptr [esi + 0xf78]
+  replace 1/1 44d772:lea ecx, [esi + 0xf1c] -> 44d9f2:lea ecx, [esi + 0xf80]
+  replace 1/1 44d7ac:mov al, byte ptr [esi + 0x6ba] -> 44da2c:mov al, byte ptr [esi + 0x71e]
+serial download          0044E310 0044E590  5464 58 structural diffs
+  replace 2/2 44e4ae:lea ecx, [ebp + 0x1124]; 44e4b4:mov byte ptr [ebp + 0x124d], 0 -> 44e72e:lea ecx, [ebp + 0x1188]; 44e734:mov byte ptr [ebp + 0x12b1], 0
+  replace 1/1 44e4bd:mov byte ptr [ebp + 0x124c], 0 -> 44e73d:mov byte ptr [ebp + 0x12b0], 0
+  replace 2/2 44e4da:lea eax, [ebp + 0x1138]; 44e4e0:mov dword ptr [ebp + 0x1138], edx -> 44e75a:lea eax, [ebp + 0x119c]; 44e760:mov dword ptr [ebp + 0x119c], edx
+  replace 1/1 44e500:mov dword ptr [ebp + 0x1134], eax -> 44e780:mov dword ptr [ebp + 0x1198], eax
+  replace 1/1 44e510:mov dword ptr [ebp + 0x1148], eax -> 44e790:mov dword ptr [ebp + 0x11ac], eax
+  replace 1/1 44e519:mov dword ptr [ebp + 0x1120], eax -> 44e799:mov dword ptr [ebp + 0x1184], eax
+  replace 1/1 44e67e:mov al, byte ptr [ebp + 0x6bf] -> 44e8fe:mov al, byte ptr [ebp + 0x723]
+user file encode         0045BF10 0045C190   208 byte identical
+user file inverse        0045BFE0 0045C260   160 byte identical
+SWD mode UI              0047E590 ambiguous []
+send reset action        004A81C0 ambiguous []
+reset command builder    004A85C0 ambiguous [4417680, 4787424, 4866560]
+publish executable       004B9300 004BA010   768 6 structural diffs
+  replace 1/1 4b9323:mov eax, dword ptr [esi + 0x77454] -> 4ba033:mov eax, dword ptr [esi + 0x77514]
+  replace 1/1 4b934a:cmp dword ptr [esi + 0x77370], ebx -> 4ba05a:cmp dword ptr [esi + 0x77430], ebx
+  replace 1/1 4b9352:cmp dword ptr [esi + 0x77488], ebx -> 4ba062:cmp dword ptr [esi + 0x77548], ebx
+  replace 1/1 4b935a:cmp dword ptr [esi + 0x77490], ebx -> 4ba06a:cmp dword ptr [esi + 0x77550], ebx
+  replace 2/2 4b937a:push 0x633; 4b937f:lea ecx, [esi + 0x1c54] -> 4ba08a:push 0x635; 4ba08f:lea ecx, [esi + 0x1cac]
+  replace 1/1 4b9500:lea ebx, [esi + 0x774d4] -> 4ba210:lea ebx, [esi + 0x77594]
+download dispatch setup  004BF540 ambiguous [4365696, 4410816, 4601952]
+shell encode             004E6D90 004E7F10   176 0 structural diffs
+shell inverse            004E6E40 004E7FC0   144 0 structural diffs
+RS485 pin table identical across A/C (62 entries).
+  P0.0 80
+  P0.1 81
+  P0.2 82
+  P0.3 83
+  P0.4 84
+  P0.5 85
+  P0.6 86
+  P0.7 87
+  P1.0 90
+  P1.1 91
+  P1.2 92
+  P1.3 93
+  P1.4 94
+  P1.5 95
+  P1.6 96
+  P1.7 97
+  P2.0 A0
+  P2.1 A1
+  P2.2 A2
+  P2.3 A3
+  P2.4 A4
+  P2.5 A5
+  P2.6 A6
+  P2.7 A7
+  P3.2 B2
+  P3.3 B3
+  P3.4 B4
+  P3.5 B5
+  P3.6 B6
+  P3.7 B7
+  P4.0 C0
+  P4.1 C1
+  P4.2 C2
+  P4.3 C3
+  P4.4 C4
+  P4.5 C5
+  P4.6 C6
+  P4.7 C7
+  P5.0 C8
+  P5.1 C9
+  P5.2 CA
+  P5.3 CB
+  P5.4 CC
+  P5.5 CD
+  P5.6 CE
+  P5.7 CF
+  P6.0 E8
+  P6.1 E9
+  P6.2 EA
+  P6.3 EB
+  P6.4 EC
+  P6.5 ED
+  P6.6 EE
+  P6.7 EF
+  P7.0 F8
+  P7.1 F9
+  P7.2 FA
+  P7.3 FB
+  P7.4 FC
+  P7.5 FD
+  P7.6 FE
+  P7.7 FF

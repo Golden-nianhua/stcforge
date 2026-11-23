@@ -1,0 +1,3 @@
+reset_command = "@ISP#" # Hash inside the command must be preserved.
+reset_transport = "serial"
+reset_port = "COM3"

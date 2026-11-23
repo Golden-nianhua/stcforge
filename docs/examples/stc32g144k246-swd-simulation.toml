@@ -1,0 +1,13 @@
+# 制作 STC32G144K246 的 SWD 仿真芯片，操作会擦除程序区，不读取 HEX。
+# 使用：stc-isp --config stc32g144k246-swd-simulation.toml
+model = "STC32G144K246"
+
+# link1d：由 Link1D 转接 UART ISP；serial：通过普通串口 ISP。
+if = "link1d"
+link1d_auto_power = true
+make_simulation = true
+
+[hardware]
+simulation_mode = "swd"
+# 可选：p3.0-p3.1、p3.6-p3.7、p1.6-p1.7、p4.3-p4.4；省略则保留当前引脚。
+swd_pins = "p3.0-p3.1"
