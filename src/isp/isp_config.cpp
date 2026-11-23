@@ -164,7 +164,7 @@ Config load_config_file(const std::string& path) {
 
 void print_usage() {
     std::cout <<
-        "stc-isp 0.1.0\n"
+        "stc-isp 0.1.1\n"
         "用法：stc-isp [--config file] [options]\n"
         "      stc-isp --encrypt-bin INPUT --key-file FILE --output OUTPUT\n\n"
         "连接与镜像：\n"

@@ -7,6 +7,7 @@ import queue
 import subprocess
 import tempfile
 import threading
+import xml.etree.ElementTree as ET
 import zipfile
 
 
@@ -72,6 +73,38 @@ def smoke(archive: Path) -> None:
             if stream.read(4) != b"\x7fELF":
                 raise RuntimeError("CLion prepare did not produce an ELF.")
 
+        def configure_clion(mode: str) -> dict[str, tuple[str, str, str]]:
+            config.write_text(f'[stcforge]\nmodel="STC32G144K246"\nsimulation_mode="{mode}"\n'
+                              'port=3333\nwarmup_ms=3000\n', encoding="ascii")
+            layout = check("stcforge.exe", "clion", "--config", str(config), "configure",
+                           "--project-name", "firmware", "--root", str(work),
+                           "--image", str(image), "--preset", "Debug", "--toolchain", "MCS-251",
+                           "--launcher", str(bin_dir / "stcforge.exe"),
+                           "--isp", str(bin_dir / "stc-isp.exe"))
+            if layout.strip() != "firmware-target":
+                raise RuntimeError(f"Unexpected CLion project layout: {layout!r}")
+            entries = {}
+            for path in (work / ".idea/runConfigurations").glob("*.xml"):
+                entry = ET.parse(path).getroot().find("configuration")
+                entries[entry.attrib["name"]] = (
+                    entry.attrib["TARGET_NAME"], entry.find("custom-gdb-server").attrib["download-type"],
+                    entry.attrib["PROGRAM_PARAMS"],
+                )
+            return entries
+
+        def check_clion_modes(mode: str, expected: dict[str, str]) -> None:
+            entries = configure_clion(mode)
+            actual = {name: (target, download, params.endswith(" --swd-load"))
+                      for name, (target, download, params) in entries.items()}
+            if actual != {name: ("firmware", download, download == "ALWAYS")
+                          for name, download in expected.items()}:
+                raise RuntimeError(f"Unexpected {mode} CLion entries: {actual}")
+
+        usb_entries = {"STCForge_debug": "NONE"}
+        check_clion_modes("usb", usb_entries)
+        check_clion_modes("swd", {"STCForge_swd_attach": "NONE", "STCForge_swd_flash": "ALWAYS"})
+        check_clion_modes("usb", usb_entries)
+
         with subprocess.Popen(
             [str(bin_dir / "stcforge.exe"), "gdbserver", "--mock", "--once", "--port", "0"],
             cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -105,7 +138,7 @@ def smoke(archive: Path) -> None:
                     server.kill()
                     server.wait(timeout=5)
                 reader.join(timeout=2)
-    print("PASS: bundled dependencies, ISP dry-run, CLion symbols, GDB Python, mock step.")
+    print("PASS: bundled dependencies, ISP dry-run, CLion symbols and entries, GDB Python, mock step.")
 
 
 if __name__ == "__main__":

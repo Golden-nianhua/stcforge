@@ -154,7 +154,7 @@ int run(int argc, char** argv) {
                 stcisp::list_link1d_devices();
                 return 0;
             } else if (argument == "--version") {
-                std::cout << "stc-isp 0.1.0\n";
+                std::cout << "stc-isp 0.1.1\n";
                 return 0;
             } else {
                 throw std::invalid_argument("unknown argument: " + argument);
