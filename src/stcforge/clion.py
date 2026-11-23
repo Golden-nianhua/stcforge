@@ -108,18 +108,22 @@ def write_configurations(config: dict, root_dir: Path, launcher: str, project_na
                          config_path: Path, image: Path, preset: str, toolchain: str,
                          isp: Path):
     run_dir = root_dir / ".idea/runConfigurations"
-    direct = run_dir / "STC32_Auto_STCForge_debug.xml"
+    other = run_dir / "STC32_Auto_STCForge_debug.xml"
+    direct = run_dir / "STC32_Auto_STCForge_swd_attach.xml"
     flash = run_dir / "STC32_Auto_STCForge_swd_flash.xml"
-    is_swd = config["simulation_mode"] == "swd"
-    write_configuration(config, root_dir, launcher, project_name, config_path, image,
-                        preset, toolchain, isp, direct,
-                        "STCForge_swd" if is_swd else "STCForge_debug")
-    if is_swd:
+    if config["simulation_mode"] == "swd":
+        # Older CLion sessions can retain the rejected STCForge_swd scheme name.
+        other.unlink(missing_ok=True)
+        write_configuration(config, root_dir, launcher, project_name, config_path, image,
+                            preset, toolchain, isp, direct, "STCForge_swd_attach")
         write_configuration(config, root_dir, launcher, project_name, config_path, image,
                             preset, toolchain, isp, flash,
                             "STCForge_swd_flash", download=True)
     else:
+        direct.unlink(missing_ok=True)
         flash.unlink(missing_ok=True)
+        write_configuration(config, root_dir, launcher, project_name, config_path, image,
+                            preset, toolchain, isp, other, "STCForge_debug")
 
 
 def write_configuration(config: dict, root_dir: Path, launcher: str, project_name: str,

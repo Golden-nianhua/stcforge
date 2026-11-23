@@ -9,21 +9,24 @@ from stcforge import clion
 
 
 class ClionSwdTests(unittest.TestCase):
-    def test_swd_only_has_two_distinct_build_targets(self):
+    def test_swd_entries_share_one_target_and_replace_the_legacy_scheme(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             settings = dict(simulation_mode="swd", warmup_ms=3000, port=3333)
             inputs = (root, "stcforge", "test", root / "config.toml", root / "test.hex",
                       "Debug", "MCS-251", Path("stc-isp"))
             configs = root / ".idea/runConfigurations"
-            direct = configs / "STC32_Auto_STCForge_debug.xml"
+            legacy = configs / "STC32_Auto_STCForge_debug.xml"
+            direct = configs / "STC32_Auto_STCForge_swd_attach.xml"
             flash = configs / "STC32_Auto_STCForge_swd_flash.xml"
 
             def read(path):
                 return ET.parse(path).getroot().find("configuration")
 
+            clion.write_configuration(settings, *inputs, legacy, "STCForge_swd")
             clion.write_configurations(settings, *inputs)
-            self.assertEqual(read(direct).get("name"), "STCForge_swd")
+            self.assertFalse(legacy.exists())
+            self.assertEqual(read(direct).get("name"), "STCForge_swd_attach")
             self.assertEqual(read(direct).get("TARGET_NAME"), "test")
             self.assertEqual(read(flash).get("name"), "STCForge_swd_flash")
             self.assertEqual(read(flash).get("TARGET_NAME"), "test")
@@ -34,7 +37,8 @@ class ClionSwdTests(unittest.TestCase):
             self.assertEqual(read(flash).find("custom-gdb-server").get("download-type"), "ALWAYS")
             self.assertEqual(read(direct).find("custom-gdb-server").get("download-type"), "NONE")
             clion.write_configurations({**settings, "simulation_mode": "usb"}, *inputs)
-            self.assertEqual(read(direct).get("name"), "STCForge_debug")
+            self.assertEqual(read(legacy).get("name"), "STCForge_debug")
+            self.assertFalse(direct.exists())
             self.assertFalse(flash.exists())
 
     def test_only_explicit_sync_subcommand_can_download(self):
