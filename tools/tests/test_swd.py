@@ -4,15 +4,18 @@ import io
 import os
 import queue
 import subprocess
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from stcforge.cli import main
 from stcforge.ice import IceError, IceTimeoutError, ProtocolError
 from stcforge.server import Client, serve
-from stcforge.swd import (Link1DHidTransport, Link1DSession, Link1DTarget,
+from stcforge.swd import (FlashLoad, Link1DHidTransport, Link1DSession, Link1DTarget,
                           decode_snapshot, pack_command, plan_code_pages, unpack_reply)
+from stcforge.symbols import _build_elf
 from stcforge.transport import TransportDisconnected, TransportTimeout
 
 
@@ -65,6 +68,9 @@ class FakeProbe:
             self.running = False
         elif cmd == 0x87:
             data = self.pc.to_bytes(4, "big")
+        elif cmd == 0x8d:
+            assert not self.running and size == 0
+            self.pc = address
         elif self.flash is not None and cmd in (0x8c, 0x92, 0x93):
             assert not self.running and 0xff0000 <= address < 0x1000000
             if cmd == 0x93:
@@ -136,6 +142,57 @@ class Link1DTests(unittest.TestCase):
         session.close()
         self.assertEqual([r[1] for r in wire.requests if r[0] == 0x93], [0xff0000])
         self.assertNotIn(0x81, [r[0] for r in wire.requests])
+
+    def test_debug_download_validates_image_before_touching_hardware(self):
+        image = {0xff0000: 2, 0xff0001: 0, 0xff0002: 0x1f}
+        session = mock.Mock()
+        load = FlashLoad(session, image, None)
+        with self.assertRaisesRegex(ValueError, "erase range"):
+            load.erase(0xff0200, 512)
+        load.erase(0xff0000, 512)
+        load.write(0xff0000, b"\x02\x00")
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            load.write(0xff0002, b"\x00")
+        with self.assertRaisesRegex(ValueError, "Incomplete"):
+            load.finish()
+        session.program_code.assert_not_called()
+
+    @unittest.skipUnless(os.environ.get("STCFORGE_GDB"), "真实 GDB 需要 STCFORGE_GDB")
+    def test_real_gdb_loads_verified_image_over_swd(self):
+        code = b"\x02\x00\x00$#}*"
+        image = dict(enumerate(code, 0xff0000))
+        wire = FakeProbe({0xff0000: 0x00, 0xff0200: 0x42})
+        wire.pc = 0xff0003
+        session = Link1DSession(wire)
+        session.initialize_debug()
+        ready, errors = queue.Queue(), []
+
+        def worker():
+            try:
+                serve(Link1DTarget(session), port=0, once=True, ready=ready.put,
+                      flash=FlashLoad(session, image, None))
+            except Exception as exc:
+                errors.append(exc)
+
+        with tempfile.TemporaryDirectory() as folder:
+            elf = Path(folder) / "firmware.elf"
+            elf.write_bytes(_build_elf(code, 0xff0000, b"", b"", b"", [], 1))
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+            host, port = ready.get(timeout=5)
+            command = [os.environ["STCFORGE_GDB"], "-nx", "-q", "--batch", elf.as_posix()]
+            for item in ("set architecture mcs251", "set endian big", f"target remote {host}:{port}",
+                         "load", 'printf "ENTRY=%#x\\n", $pc', "detach"):
+                command += ["-ex", item]
+            done = subprocess.run(command, capture_output=True, text=True, timeout=20)
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(errors, errors)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("ENTRY=0xff0000", done.stdout)
+        self.assertEqual(bytes(wire.flash[address] for address in image), code)
+        self.assertEqual(wire.flash[0xff0200], 0x42)
+        self.assertEqual([r[1] for r in wire.requests if r[0] == 0x93], [0xff0000])
 
     def test_flash_plan_requires_absolute_reset_and_disallows_eeprom(self):
         image = {0xff0000: 2, 0xff0001: 0, 0xff0002: 0x1f}

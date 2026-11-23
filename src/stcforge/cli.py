@@ -26,6 +26,7 @@ def parser():
     server.add_argument("--serial-port", help="UART 调试端口，例如 COM3")
     server.add_argument("--serial-baud", type=int, help="UART 调试波特率，默认 115200（8N2）")
     server.add_argument("--image", help="与目标一致的 SDCC HEX；USB/UART 调试必填")
+    server.add_argument("--swd-load", action="store_true", help="允许 GDB 下载指定的 SWD 镜像（仅本机单次会话）")
     server.add_argument("--host", default="127.0.0.1", help="监听地址，默认仅本机")
     server.add_argument("--port", type=int, default=3333)
     server.add_argument("--once", action="store_true", help="客户端断开后退出")
@@ -90,6 +91,12 @@ def connect_uart(port, baud):
     print(f"UART 仿真：{port}，{baud} 8N2，{version}，PC={state.pc:06X}", flush=True)
     return session, state
 
+
+def swd_progress(index, total, written):
+    if index == total or index % 8 == 0:
+        print(f"SWD 校验 {index}/{total} 页；已更新 {written} 页", flush=True)
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -104,6 +111,8 @@ def main(argv=None):
                 raise ValueError("端口范围应为 0～65535")
             if args.swd_speed is not None and not args.swd:
                 raise ValueError("--swd-speed 仅用于 --swd")
+            if args.swd_load and (not args.swd or not args.image or not args.once or args.host != "127.0.0.1"):
+                raise ValueError("--swd-load 需要 --swd --image --once，并且仅监听 127.0.0.1")
             if not args.uart and (args.serial_port is not None or args.serial_baud is not None):
                 raise ValueError("--serial-port 和 --serial-baud 仅用于 --uart")
             if args.mock:
@@ -112,10 +121,19 @@ def main(argv=None):
                 target = MockTarget()
                 print("目标：离线模拟器（NOP/SJMP 测试程序）")
             elif args.swd:
-                if args.image:
+                if args.image and not args.swd_load:
                     raise ValueError("Link1D 直接读取目标代码，不需要 --image；ELF 请在 GDB 中加载")
+                if args.swd_load:
+                    from .symbols import read_hex
+                    from .swd import FlashLoad, plan_code_pages
+                    image = read_hex(Path(args.image))
+                    plan_code_pages(image)  # Reject invalid images before contacting the probe.
                 target, _ = connect_swd(args.device_path, args.swd_speed or DEFAULT_SWD_SPEED_KHZ)
                 print("代码读取来源：Link1D 目标程序存储器；使用硬件断点", flush=True)
+                if args.swd_load:
+                    flash = FlashLoad(target.session, image, swd_progress)
+                    serve(target, args.host, args.port, args.once, flash=flash)
+                    return 0
             elif args.uart:
                 from .symbols import read_hex
                 if args.device_path or not args.image:
@@ -156,11 +174,7 @@ def main(argv=None):
                 return 0
             target, _ = connect_swd(args.device_path, args.swd_speed)
             try:
-                def progress(index, total, written):
-                    if index == total or index % 8 == 0:
-                        print(f"SWD 校验 {index}/{total} 页；已更新 {written} 页", flush=True)
-
-                total, written = target.session.program_code(image, progress)
+                total, written = target.session.program_code(image, swd_progress)
                 print(f"SWD 下载完成：写入 {written} 页，保留 {total - written} 页，全部回读一致", flush=True)
             finally:
                 target.close()

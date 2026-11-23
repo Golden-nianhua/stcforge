@@ -37,8 +37,6 @@ def read_config(path: Path) -> dict:
     if type(speed) is not int or speed not in SWD_SPEED_CODES:
         raise ValueError("swd_speed_khz 必须为 100、300、600 或 1000")
     config["swd_speed_khz"] = speed
-    if type(config.get("swd_sync_flash", False)) is not bool:
-        raise ValueError("swd_sync_flash 必须为布尔值")
     config["simulation_isp"] = document.get("simulation_isp", {})
     if type(config["simulation_isp"].get("download_image", False)) is not bool:
         raise ValueError("simulation_isp.download_image 必须为布尔值")
@@ -106,9 +104,27 @@ def check_model_mode(isp: Path, model: str, mode: str) -> None:
     raise ValueError(f"stc-isp 型号索引中未找到 {model}")
 
 
+def write_configurations(config: dict, root_dir: Path, launcher: str, project_name: str,
+                         config_path: Path, image: Path, preset: str, toolchain: str,
+                         isp: Path):
+    run_dir = root_dir / ".idea/runConfigurations"
+    direct = run_dir / "STC32_Auto_STCForge_debug.xml"
+    flash = run_dir / "STC32_Auto_STCForge_swd_flash.xml"
+    is_swd = config["simulation_mode"] == "swd"
+    write_configuration(config, root_dir, launcher, project_name, config_path, image,
+                        preset, toolchain, isp, direct,
+                        "STCForge_swd" if is_swd else "STCForge_debug")
+    if is_swd:
+        write_configuration(config, root_dir, launcher, project_name, config_path, image,
+                            preset, toolchain, isp, flash,
+                            "STCForge_swd_flash", download=True)
+    else:
+        flash.unlink(missing_ok=True)
+
+
 def write_configuration(config: dict, root_dir: Path, launcher: str, project_name: str,
                         config_path: Path, image: Path, preset: str, toolchain: str,
-                        isp: Path):
+                        isp: Path, output: Path, name: str, *, download=False):
     """采用本机 CLion 2026.1 的 Embedded GDB Server 序列化格式。"""
     # 调试入口固定使用 Debug，避免误用 Release 遗留的 CDB。
     elf = image.with_suffix(".debug.elf").resolve()
@@ -116,16 +132,18 @@ def write_configuration(config: dict, root_dir: Path, launcher: str, project_nam
                 if elf.is_relative_to(root_dir) else elf.as_posix())
     command = ["clion", "--config", config_path.resolve().as_posix(),
                "serve", "--image", image.resolve().as_posix(), "--isp", isp.as_posix()]
+    if download:
+        command.append("--swd-load")
     root = ET.Element("component", name="ProjectRunConfigurationManager")
     run = ET.SubElement(root, "configuration", {
-        "default": "false", "name": "STCForge_debug",
+        "default": "false", "name": name,
         "type": "com.jetbrains.cidr.embedded.customgdbserver.type",
         "factoryName": "com.jetbrains.cidr.embedded.customgdbserver.factory",
         "PROGRAM_PARAMS": subprocess.list2cmdline(command),
         "REDIRECT_INPUT": "false", "ELEVATE": "false", "USE_EXTERNAL_CONSOLE": "false",
         "EMULATE_TERMINAL": "false", "PASS_PARENT_ENVS_2": "true",
         "WORKING_DIR": "file://$ProjectFileDir$", "PROJECT_NAME": project_name,
-        "TARGET_NAME": "stc_debug_build",
+        "TARGET_NAME": project_name, "folderName": "Debug",
         "CONFIG_NAME": preset,
         "version": "1", "RUN_PATH": run_path,
     })
@@ -135,14 +153,13 @@ def write_configuration(config: dict, root_dir: Path, launcher: str, project_nam
     server = ET.SubElement(run, "custom-gdb-server", {
         "version": "1", "gdb-connect": f"127.0.0.1:{config['port']}",
         "executable": launcher, "warmup-ms": str(config["warmup_ms"]),
-        "download-type": "NONE", "reset-cmd": "", "reset-type": "NEVER",
+        "download-type": "ALWAYS" if download else "NONE", "reset-cmd": "", "reset-type": "NEVER",
     })
     # 和预设绑定相同的工具链，使用用户已配置的 MCS-251 GDB。
     ET.SubElement(server, "debugger", toolchainName=toolchain)
     method = ET.SubElement(run, "method", v="2")
     ET.SubElement(method, "option", name="CLION.COMPOUND.BUILD", enabled="true")
     ET.indent(root)
-    output = root_dir / ".idea/runConfigurations/STC32_Auto_STCForge_debug.xml"
     output.parent.mkdir(parents=True, exist_ok=True)
     text = ET.tostring(root, encoding="unicode") + "\n"
     if not output.exists() or output.read_text(encoding="utf-8") != text:
@@ -168,6 +185,7 @@ def add_arguments(parser):
     serve = actions.add_parser("serve")
     serve.add_argument("--image", type=Path, required=True)
     serve.add_argument("--isp", type=Path)
+    serve.add_argument("--swd-load", action="store_true")
     enable = actions.add_parser("enable")
     enable.add_argument("--image", type=Path, required=True)
     enable.add_argument("--debug-firmware-dir", type=Path, required=True)
@@ -185,8 +203,9 @@ def execute(args) -> int:
     try:
         config = read_config(args.config)
         if args.action == "configure":
-            write_configuration(config, args.root.resolve(), args.launcher, args.project_name,
-                                args.config, args.image, args.preset, args.toolchain, args.isp)
+            write_configurations(config, args.root.resolve(), args.launcher, args.project_name,
+                                 args.config, args.image, args.preset, args.toolchain, args.isp)
+            print("firmware-target")
             return 0
         if args.action == "enable":
             command = enable_command(config, args.isp, args.image, args.debug_firmware_dir)
@@ -199,12 +218,16 @@ def execute(args) -> int:
         image = str(args.image.with_suffix(".hex"))
         mode = config["simulation_mode"]
         if args.action == "serve":
+            if args.swd_load and mode != "swd":
+                raise ValueError("--swd-load 需要 simulation_mode = \"swd\"")
             if args.isp is not None:
                 check_model_mode(args.isp, config["model"], mode)
             command = stcforge + ["gdbserver", f"--{mode}", "--once",
                                   "--host", "127.0.0.1", "--port", str(config["port"])]
             if mode == "swd":
                 command += swd_args(config)
+                if args.swd_load:
+                    command += ["--swd-load", "--image", image]
             else:
                 command += ["--image", image]
                 if mode == "uart":
@@ -219,14 +242,7 @@ def execute(args) -> int:
                 command += ["--source-dir", str(args.root / folder)]
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
-        result = subprocess.run(command, env=environment, check=False).returncode
-        if result == 0 and args.action == "prepare":
-            if mode == "swd" and config.get("swd_sync_flash", False):
-                # 在 CLion 的构建阶段完成擦写校验，避免占用 GDB 的连接等待时间。
-                sync = stcforge + ["swd-flash", "--image", image] + swd_args(config)
-                return subprocess.run(sync, env=environment, check=False).returncode
-            print(f"{mode.upper()} 仿真不自动下载；请确保目标固件与本地镜像一致。", flush=True)
-        return result
+        return subprocess.run(command, env=environment, check=False).returncode
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         print(f"STCForge 配置错误：{error}", file=sys.stderr)
         return 1

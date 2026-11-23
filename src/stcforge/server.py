@@ -21,11 +21,25 @@ def target_xml():
             '<target><architecture>mcs251</architecture>'
             f'<feature name="org.stcforge.mcs251.core">{regs}</feature></target>').encode()
 
-def memory_xml(*, hardware_breakpoints=False):
+def memory_xml(*, hardware_breakpoints=False, flash=None):
     # 调试视图的代码支持 Z0 软件补丁。声明 rom 会让 GDB 自动改用硬件断点。
     # 普通 M 写代码仍由 Target 拒绝，不代表芯片的物理程序区是 RAM。
-    regions = "".join(f'<memory type="{"rom" if hardware_breakpoints and r.space == 5 else "ram"}" '
-                      f'start="0x{r.start:x}" length="0x{r.end-r.start+1:x}"/>' for r in REGIONS)
+    regions = ""
+    for r in REGIONS:
+        if r.space == 5 and flash is not None:
+            from .swd import FLASH_PAGE_SIZE
+            if r.start < flash.start:
+                regions += (f'<memory type="rom" start="{r.start:#x}" '
+                            f'length="{flash.start - r.start:#x}"/>')
+            regions += (f'<memory type="flash" start="{flash.start:#x}" '
+                        f'length="{flash.end - flash.start:#x}">'
+                        f'<property name="blocksize">{FLASH_PAGE_SIZE:#x}</property></memory>')
+            if flash.end <= r.end:
+                regions += (f'<memory type="rom" start="{flash.end:#x}" '
+                            f'length="{r.end + 1 - flash.end:#x}"/>')
+        else:
+            kind = "rom" if hardware_breakpoints and r.space == 5 else "ram"
+            regions += f'<memory type="{kind}" start="{r.start:#x}" length="{r.end-r.start+1:#x}"/>'
     return ('<?xml version="1.0"?><!DOCTYPE memory-map SYSTEM "gdb-memory-map.dtd">'
             f'<memory-map>{regions}</memory-map>').encode()
 
@@ -38,6 +52,22 @@ def escape_binary(data):
             result.append(byte)
     return bytes(result)
 
+
+def unescape_binary(data):
+    result = bytearray()
+    pos = 0
+    while pos < len(data):
+        byte = data[pos]
+        pos += 1
+        if byte == ord("}"):
+            if pos == len(data):
+                raise ValueError("Incomplete RSP binary escape")
+            byte = data[pos] ^ 0x20
+            pos += 1
+        result.append(byte)
+    return bytes(result)
+
+
 class SocketAdapter:
     def __init__(self, sock): self.sock = sock
     def set_timeout(self, timeout): self.sock.settimeout(timeout)
@@ -45,8 +75,9 @@ class SocketAdapter:
     def write(self, data): return self.sock.send(data)
 
 class Client:
-    def __init__(self, sock, target):
+    def __init__(self, sock, target, flash=None):
         self.target = target
+        self.flash = flash
         self.io = GDBServerPacketIOThread(SocketAdapter(sock), 0)
         self.waiting = False
         self.detached = False
@@ -68,7 +99,7 @@ class Client:
         if op != b"read": return b""
         if obj == b"features" and annex == b"target.xml": payload = target_xml()
         elif obj == b"memory-map" and not annex:
-            payload = memory_xml(hardware_breakpoints=self.target.hardware_breakpoints)
+            payload = memory_xml(hardware_breakpoints=self.target.hardware_breakpoints, flash=self.flash)
         else: return b""
         off, length = (int(value, 16) for value in tail.split(b","))
         length = min(length, 2048)
@@ -88,6 +119,24 @@ class Client:
         if data == b"?": return self.stop_reply()
         if data == b"g": return self.target.read_registers().hex().encode()
         if data.startswith(b"p"): return self.target.read_register(int(data[1:], 16)).hex().encode()
+        if self.flash is not None:
+            if data.startswith(b"vFlashErase:"):
+                address, length = (int(part, 16) for part in data.split(b":", 1)[1].split(b","))
+                self.flash.erase(address, length)
+                return b"OK"
+            if data.startswith(b"vFlashWrite:"):
+                _, address, payload = data.split(b":", 2)
+                self.flash.write(int(address, 16), unescape_binary(payload))
+                return b"OK"
+            if data == b"vFlashDone":
+                self.flash.finish()
+                return b"OK"
+            if data.startswith(b"P1c="):
+                value = bytes.fromhex(data[4:].decode("ascii"))
+                if len(value) != 4:
+                    return b"E01"
+                self.flash.set_entry(int.from_bytes(value, "big"))
+                return b"OK"
         if data.startswith((b"P", b"G")): return b"E01"  # 未掌握寄存器写回命令。
         if data.startswith(b"m"):
             address, length = (int(v, 16) for v in data[1:].split(b","))
@@ -207,7 +256,7 @@ class Client:
                     raise
                 LOG.error("异常退出时恢复断点失败，保留首个通信错误：%s", exc)
 
-def serve(target, host="127.0.0.1", port=3333, once=False, ready=None):
+def serve(target, host="127.0.0.1", port=3333, once=False, ready=None, *, flash=None):
     try:
         with socket.socket() as listener:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -219,7 +268,7 @@ def serve(target, host="127.0.0.1", port=3333, once=False, ready=None):
             while True:
                 sock, peer = listener.accept()
                 LOG.info("GDB 已连接: %s", peer)
-                with sock: Client(sock, target).run()
+                with sock: Client(sock, target, flash).run()
                 if once: break
     finally:
         failing = sys.exc_info()[0] is not None

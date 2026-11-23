@@ -40,6 +40,51 @@ def plan_code_pages(image):
     return tuple((base, bytes(pages[base])) for base in sorted(pages))
 
 
+class FlashLoad:
+    """Validate GDB's load against the local HEX before touching target flash."""
+
+    def __init__(self, session, image, progress):
+        pages = plan_code_pages(image)
+        self.session = session
+        self.image = image
+        self.progress = progress
+        self.start = pages[0][0]
+        self.end = pages[-1][0] + FLASH_PAGE_SIZE
+        self.expected = bytes(image.get(address, 0xff) for address in range(self.start, max(image) + 1))
+        self.erased = set()
+        self.received = set()
+        self.finished = False
+
+    def erase(self, address, length):
+        if (self.finished or length <= 0 or address < self.start or address + length > self.end
+                or address % FLASH_PAGE_SIZE or length % FLASH_PAGE_SIZE):
+            raise ValueError("Invalid SWD load erase range")
+        self.erased.update(range(address, address + length, FLASH_PAGE_SIZE))
+
+    def write(self, address, data):
+        offset = address - self.start
+        if (self.finished or not data or offset < 0 or offset + len(data) > len(self.expected)
+                or data != self.expected[offset:offset + len(data)]
+                or any(page not in self.erased for page in range(
+                    address & ~(FLASH_PAGE_SIZE - 1), address + len(data), FLASH_PAGE_SIZE))):
+            raise ValueError("SWD load data does not match the prepared HEX")
+        self.received.update(range(offset, offset + len(data)))
+
+    def finish(self):
+        if self.finished or len(self.received) != len(self.expected):
+            raise ValueError("Incomplete SWD image; no flash written")
+        self.session.program_code(self.image, self.progress)
+        self.finished = True
+
+    def set_entry(self, address):
+        if not self.finished or address != self.start:
+            raise ValueError("Invalid SWD load entry point")
+        if self.session.read_pc() != address:
+            self.session.set_entry_pc(address)
+            if self.session.read_pc() != address:
+                raise ProtocolError("Link1D did not set the SWD load entry point")
+
+
 class Link1DHidTransport(HidTransport):
     device_name = "STC Link1D SWD"
     usb_ids = ((0x34bf, 0x1004), (0x34bf, 0x1005))
@@ -160,6 +205,9 @@ class Link1DSession:
     def read_pc(self):
         data = self._exchange(READ_PC, expected=4)
         return int.from_bytes(data[1:], "big")
+
+    def set_entry_pc(self, address):
+        self._exchange(0x8d, address=address, expected=0)
 
     def read_state(self):
         snapshot = self._exchange(SNAPSHOT)
