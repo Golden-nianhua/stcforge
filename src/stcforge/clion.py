@@ -244,6 +244,11 @@ def execute(args) -> int:
                                   "--hex", image, "--output", str(args.output), "--source-root", str(args.root)]
             for folder in args.source_dir:
                 command += ["--source-dir", str(args.root / folder)]
+            # The template keeps its linked CDB in <build>/firmware and SDCC
+            # listings beside the CMake objects in <build>/CMakeFiles.
+            listings = args.image.resolve().parent.parent / "CMakeFiles"
+            if listings.is_dir():
+                command += ["--listing-dir", str(listings)]
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
         return subprocess.run(command, env=environment, check=False).returncode

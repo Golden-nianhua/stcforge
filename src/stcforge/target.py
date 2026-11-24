@@ -33,10 +33,10 @@ REGIONS = (
     Region(0x10000080, 0x100000ff, 4, base=0x10000000),
 )
 
-def region_for(address, count):
+def region_for(address, count, regions=REGIONS):
     if count <= 0 or count > 4096:
         raise ValueError("单次内存请求长度必须为 1～4096 字节")
-    for region in REGIONS:
+    for region in regions:
         if region.start <= address <= region.end and address + count - 1 <= region.end:
             return region
     raise ValueError(f"未映射或跨区域的地址: 0x{address:x}+{count}")
@@ -50,6 +50,7 @@ def register_slice(index):
 class Target:
     """单客户端目标公共逻辑。普通内存写入不会覆盖代码。"""
     hardware_breakpoints = False
+    regions = REGIONS
 
     def __init__(self):
         self.running = False
@@ -63,7 +64,7 @@ class Target:
         return int.from_bytes(self.read_register(28), "big")
 
     def read_memory(self, address, count):
-        region = region_for(address, count)
+        region = region_for(address, count, self.regions)
         if self.running and region.space != 5:
             raise RuntimeError("当前为 all-stop 调试，请暂停后读取设备内存")
         data = bytearray(self._read(region, address, count))
@@ -76,7 +77,7 @@ class Target:
     def write_memory(self, address, data):
         if self.running:
             raise RuntimeError("运行期间不允许写内存")
-        region = region_for(address, len(data))
+        region = region_for(address, len(data), self.regions)
         if not region.writable:
             raise ValueError("程序区仅允许通过断点专用路径修改")
         self._write(region, address, bytes(data))

@@ -21,27 +21,27 @@ def target_xml():
             '<target><architecture>mcs251</architecture>'
             f'<feature name="org.stcforge.mcs251.core">{regs}</feature></target>').encode()
 
-def memory_xml(*, hardware_breakpoints=False, flash=None):
+def memory_xml(*, hardware_breakpoints=False, flash=None, regions=REGIONS):
     # 调试视图的代码支持 Z0 软件补丁。声明 rom 会让 GDB 自动改用硬件断点。
     # 普通 M 写代码仍由 Target 拒绝，不代表芯片的物理程序区是 RAM。
-    regions = ""
-    for r in REGIONS:
+    entries = ""
+    for r in regions:
         if r.space == 5 and flash is not None:
             from .swd import FLASH_PAGE_SIZE
             if r.start < flash.start:
-                regions += (f'<memory type="rom" start="{r.start:#x}" '
+                entries += (f'<memory type="rom" start="{r.start:#x}" '
                             f'length="{flash.start - r.start:#x}"/>')
-            regions += (f'<memory type="flash" start="{flash.start:#x}" '
+            entries += (f'<memory type="flash" start="{flash.start:#x}" '
                         f'length="{flash.end - flash.start:#x}">'
                         f'<property name="blocksize">{FLASH_PAGE_SIZE:#x}</property></memory>')
             if flash.end <= r.end:
-                regions += (f'<memory type="rom" start="{flash.end:#x}" '
+                entries += (f'<memory type="rom" start="{flash.end:#x}" '
                             f'length="{r.end + 1 - flash.end:#x}"/>')
         else:
             kind = "rom" if hardware_breakpoints and r.space == 5 else "ram"
-            regions += f'<memory type="{kind}" start="{r.start:#x}" length="{r.end-r.start+1:#x}"/>'
+            entries += f'<memory type="{kind}" start="{r.start:#x}" length="{r.end-r.start+1:#x}"/>'
     return ('<?xml version="1.0"?><!DOCTYPE memory-map SYSTEM "gdb-memory-map.dtd">'
-            f'<memory-map>{regions}</memory-map>').encode()
+            f'<memory-map>{entries}</memory-map>').encode()
 
 def escape_binary(data):
     result = bytearray()
@@ -99,7 +99,8 @@ class Client:
         if op != b"read": return b""
         if obj == b"features" and annex == b"target.xml": payload = target_xml()
         elif obj == b"memory-map" and not annex:
-            payload = memory_xml(hardware_breakpoints=self.target.hardware_breakpoints, flash=self.flash)
+            payload = memory_xml(hardware_breakpoints=self.target.hardware_breakpoints, flash=self.flash,
+                                 regions=self.target.regions)
         else: return b""
         off, length = (int(value, 16) for value in tail.split(b","))
         length = min(length, 2048)

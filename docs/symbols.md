@@ -127,7 +127,8 @@ ELF 含有效节表及以下节：
 
 - `.text`：从 HEX 最低 code 地址到最高 code 地址，代码空洞填 `0xFF`；
 - `.symtab`、`.strtab`、`.shstrtab`：函数和变量符号；
-- `.debug_abbrev`、`.debug_info`、`.debug_line`：最小 DWARF2。
+- `.debug_abbrev`、`.debug_info`、`.debug_line`：最小 DWARF2；
+- `.debug_loc`：可验证的栈和寄存器局部变量位置，按 PC 区间区分。
 
 编译单元的 `DW_AT_producer` 为
 `STCForge experimental SDCC CDB converter`。全局和唯一名字的文件静态整数
@@ -139,6 +140,24 @@ DW_AT_location = DW_FORM_block1 { DW_OP_addr <4-byte big-endian address> }
 
 代码连续跨度最多允许 16 MiB；超过时拒绝，避免异常 HEX 让进程分配巨量内存。
 `.text` 的 `sh_size` 与实际代码跨度一致，空洞是明确的 `0xFF` 填充。
+
+如果汇编函数只有 C 声明（如模板的 `system_idle()`），则从 `.cdb` 同名的链接
+`.map` 补充函数入口，供 GDB 步过调用；不推断汇编函数的大小或源码行。
+
+## 查看局部变量
+
+CLion 模板的 Debug 构建会自动使用当前构建目录 `CMakeFiles/` 下的链接后 `.rst`。
+单独运行 `stcforge symbols` 时，转换器会查找 `.cdb` 同目录的 `.rst`；
+其他目录可用 `--listing-dir` 指定。不需要修改或重新烧录 HEX。
+
+例如停在模板的 `debug_u32 = now;`，变量窗口会自动列出 `last_toggle` 和 `now`。
+手动添加的监视是独立条目；CLion 调试窗口的布局选项 `Separate watches` 可以把两类条目分开。
+
+栈位置目前只支持函数体最外层、有固定栈槽并能确认初始化的基本整型；寄存器位置支持
+带可识别初始化、保存在 `R0–R15` 的单字节或多字节基本整型。同一个值在多条寄存器
+中时按芯片字节序组装。指令字节须与 HEX 一致。声明所在源码块可以确定时，最后一次
+引用后也继续跟踪；调用后可从已验证的保存槽恢复寄存器字节，在栈与寄存器之间切换。
+值已被覆盖、尚未初始化或无法确认位置时，GDB 显示不可用，不读取猜测的值。
 
 ## 输入校验
 
@@ -166,9 +185,8 @@ CDB 的重复声明按 `(scope, module, name)` 去重。数千条重复寄存器
 
 - 不生成指针、数组、结构体、联合体、浮点类型；
 - 不生成位变量/位寄存器；
-- 不生成局部变量或函数参数 DIE，只在 `skipped.locals` 等计数；
-- 不生成 `DW_TAG_subprogram`、调用参数和栈展开信息；函数仅通过
-  `.symtab` 与 `.debug_line` 提供；
+- 不转换函数参数、寄存器中部分仍有效的值或无法验证的局部变量位置；
+- 不生成调用栈展开信息；局部变量支持限于停住的当前函数；
 - `S:C` 宏不生成地址；`L:A` 汇编地址和 `L:L` 局部地址只记为已知忽略；
 - 不支持多编译单元、内联函数、模板或 C++ 名称修饰；
 - 不接入 stcgal，不操作硬件，不开发 DAP；

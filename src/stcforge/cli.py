@@ -37,6 +37,8 @@ def parser():
     symbols.add_argument("--source-root", help="CDB 记录的相对源码路径基准")
     symbols.add_argument("--source-dir", action="append", default=[],
                          help="源码所在目录，可重复指定；同名文件必须唯一匹配")
+    symbols.add_argument("--listing-dir", type=Path, action="append", default=[],
+                         help="递归查找链接后的 .rst，用于验证局部变量位置")
     symbols.add_argument("--json", action="store_true", help="以 JSON 输出完整转换统计")
     devices = sub.add_parser("list", help="枚举调试探针，不打开设备")
     devices.add_argument("--swd", action="store_true", help="枚举 Link1D SWD 而不是直连 USB-ICE")
@@ -194,13 +196,15 @@ def main(argv=None):
             from .symbols import convert
             result = convert(Path(args.cdb), Path(args.hex), Path(args.output),
                              source_root=Path(args.source_root) if args.source_root else None,
-                             source_dirs=[Path(folder) for folder in args.source_dir])
+                             source_dirs=[Path(folder) for folder in args.source_dir],
+                             listing_dirs=args.listing_dir)
             if args.json:
                 import json
                 print(json.dumps(result, ensure_ascii=False, indent=2))
             else:
                 print(f"调试符号已生成：{args.output}")
                 print(f"函数 {result['functions']} 个；变量 {result['variables']} 个（SFR {result['sfr']} 个）；"
+                      f"局部变量 {result['stack_locals']} 个栈、{result['register_locals']} 个寄存器；"
                       f"源码行 {result['lines']} 条，来自 {result['files']} 个文件。")
                 skipped = {name: count for name, count in result['skipped'].items() if count}
                 if skipped:
@@ -210,7 +214,6 @@ def main(argv=None):
                               'missing_function_address': '缺地址的函数', 'malformed_records': '无法解析的记录'}
                     labels['ambiguous_file_statics'] = '有歧义的文件静态变量'
                     print('已跳过：' + '、'.join(f"{labels.get(name, name)} {count} 条" for name, count in skipped.items()))
-                print("当前支持源码行和简单整型变量；局部变量、复杂类型与调用栈尚未实现。")
         else:
             import hid
             if args.swd:

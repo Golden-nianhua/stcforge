@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import struct
 import os
+import queue
+import re
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -392,6 +395,31 @@ class SymbolConverterTests(unittest.TestCase):
         self.assertNotIn("g_unknown", by_name)
         self.assertNotIn("P00", by_name)
 
+    def test_map_supplies_assembly_function_entries_without_guessing_sizes(self):
+        self.cdb.write_text(_fixture_cdb() + """
+S:G$system_idle$0_0$0({3}DF,SV:S),C,0,0
+S:G$outside$0_0$0({3}DF,SV:S),C,0,0
+S:G$conflict$0_0$0({3}DF,SV:S),C,0,0
+S:G$in_main$0_0$0({3}DF,SV:S),C,0,0
+S:G$data_only$0_0$0({3}DF,SV:S),C,0,0
+""", encoding="utf-8")
+        self.cdb.with_suffix(".map").write_text("""
+C:   00FC280A  _system_idle                       idle
+C:   00FC2820  _outside                           outside
+C:   00FC2808  _conflict                          first
+C:   00FC280A  _conflict                          second
+C:   00FC2802  _in_main                           main
+C:   00FC280A  _some_code                         idle
+D:   00FC280A  _data_only                         data
+""", encoding="ascii")
+        self.assertEqual(self._convert()["map_functions"], 1)
+        data = self.output.read_bytes()
+        _, sections = _elf(data)
+        syms = {row["name"]: row for row in _symbols(data, sections)}
+        self.assertEqual(syms["system_idle"]["value"], 0xFC280A)
+        self.assertEqual(syms["system_idle"]["size"], 0)
+        self.assertFalse(syms.keys() & {"outside", "conflict", "in_main", "some_code", "data_only"})
+
     def test_dwarf_variables_and_line_table(self):
         summary = self._convert()
         self.assertEqual(summary["globals"], 4)
@@ -450,6 +478,229 @@ class SymbolConverterTests(unittest.TestCase):
         self.assertTrue(any("同名" in line for line in summary["limitations"]))
         self.assertTrue(any("2 条跨模块同名的文件静态变量" in line
                             for line in summary["limitations"]))
+
+    def _stack_fixture(self):
+        self.cdb.write_text("""M:main
+F:G$main$0_0$0({3}DF,SV:S),C,0,0,0,0,0
+S:Lmain.main$last_toggle$1_1$2({2}SI:U),B,1,1
+S:Lmain.main$now$2_1$3({2}SI:U),R,0,0,[r3,r2]
+L:G$main$0$0:FF0000
+L:XG$main$0$0:FF0012
+L:C$main.c$11$1_1$2:FF0002
+L:C$main.c$12$2_1$3:FF000A
+L:C$main.c$13$2_1$3:FF000C
+""", encoding="utf-8")
+        code = bytes.fromhex("0B FD 39 BF FF FF 7A FB B0 00 CA 98 00 DA 98 00 1B FD AA")
+        self.hex.write_text(_ihex_text([_ihex_record(0, 0, code)], base=0xFF0000),
+                            encoding="ascii")
+        listing = self.root / "main.c.rst"
+        listing.write_text("""      FF0000 0B FD            [12]   1 inc spx,#2
+                           000002    2 C$main.c$11$1_1$2 ==.
+                                     3 ; C:\\source\\main.c:11: unsigned int last_toggle = get_time();
+      FF0002 39 BF FF FF       [12]   4 mov @spx-0x0001,a
+      FF0006 7A FB B0          [12]   5 mov @spx,a
+                           000009    6 C$main.c$12$2_1$3 ==.
+                                     7 ; C:\\source\\main.c:12: use(last_toggle);
+      FF0009 00               [12]   8 nop
+      FF000A CA 98            [12]   9 push r9
+      FF000C 00               [12]  10 nop
+      FF000D DA 98            [24]  11 pop r9
+      FF000F 00               [12]  12 nop
+      FF0010 1B FD            [12]  13 dec spx,#2
+      FF0012 AA               [24]  14 eret
+""", encoding="utf-8")
+        return code, listing
+
+    def test_stack_ranges_require_matching_linked_listing(self):
+        _, listing = self._stack_fixture()
+        summary = self._convert()
+        self.assertEqual(summary["stack_locals"], 1)
+        self.assertEqual(summary["skipped"]["locals"], 1)
+        data = self.output.read_bytes()
+        _, sections = _elf(data)
+        loc = _section(sections, ".debug_loc")
+        self.assertEqual(data[loc["offset"]:loc["offset"] + loc["size"]],
+                         struct.pack(">IIH2sIIH2sIIH2sII",
+                                     9, 12, 2, b"\x89\x7f",
+                                     12, 15, 2, b"\x89\x7e",
+                                     15, 18, 2, b"\x89\x7f", 0, 0))
+        original = listing.read_text(encoding="utf-8")
+        for wrong in (original.replace("CA 98", "CA 88"),
+                      original.replace("push r9", "pop r9"),
+                      original.replace("mov @spx,a", "mov @spx-0x0001,a")):
+            with self.subTest(listing=wrong):
+                listing.write_text(wrong, encoding="utf-8")
+                self.assertEqual(self._convert()["stack_locals"], 0)
+
+    @unittest.skipUnless(STC_GDB.is_file(), "requires built stc-gdb")
+    def test_gdb_mi_reads_stack_local_before_and_after_push(self):
+        from stcforge.server import serve
+        from stcforge.target import MockTarget
+
+        code, _ = self._stack_fixture()
+        self.assertEqual(self._convert()["stack_locals"], 1)
+
+        for offset, spx, expected in ((2, 0x105, "<optimized out>"),
+                                      (9, 0x105, "4660"), (12, 0x106, "4660"),
+                                      (18, 0x103, "<optimized out>")):
+            with self.subTest(pc=offset):
+                target = MockTarget()
+                target.memory.update({0xFF0000 + i: value for i, value in enumerate(code)})
+                target._set_pc(0xFF0000 + offset)
+                target.registers[36:40] = spx.to_bytes(4, "big")
+                target.write_memory(0x103, b"\x99\x12\x34\xab")
+                ready = queue.Queue()
+                handler = threading.Thread(target=serve, args=(target,),
+                                           kwargs=dict(port=0, once=True, ready=ready.put), daemon=True)
+                handler.start()
+                host, port = ready.get(timeout=5)
+                result = subprocess.run([str(STC_GDB), "-nx", "-q", "--interpreter=mi2"],
+                                        input="\n".join([
+                                            "1-gdb-set architecture mcs251", "2-gdb-set endian big",
+                                            f'3-file-exec-and-symbols "{self.output.as_posix()}"',
+                                            f"4-target-select remote {host}:{port}",
+                                            "5-stack-list-variables --simple-values",
+                                            "6-data-evaluate-expression last_toggle",
+                                            "7-target-detach", "8-gdb-exit", "",
+                                        ]), text=True, capture_output=True, timeout=15)
+                handler.join(5)
+                self.assertFalse(handler.is_alive())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('name="last_toggle"', result.stdout)
+                self.assertIn(f'6^done,value="{expected}"', result.stdout)
+                self.assertNotIn('name="now"', result.stdout)
+
+    def test_register_local_initialized_in_loop_after_elided_declaration(self):
+        source = self.root / "main.c"
+        code = bytes.fromhex("00 9A FF 00 20 7E 91 82 7C B9 80 F5")
+        self.hex.write_text(_ihex_text([_ihex_record(0, 0, code)], base=0xFF0000),
+                            encoding="ascii")
+        self.cdb.write_text("""M:main
+F:G$main$0_0$0({3}DF,SV:S),C,0,0,0,0,0
+S:Lmain.main$value$1_0$1({1}SC:U),R,0,0,[r9]
+L:G$main$0$0:FF0000
+L:XG$main$0$0:FF000B
+L:C$main.c$2$1_0$1:FF0000
+L:C$main.c$5$3_0$2:FF0001
+L:C$main.c$6$3_0$2:FF0008
+""", encoding="ascii")
+        listing = self.root / "main.c.rst"
+        listing_text = """                           000000    1 C$main.c$2$1_0$1 ==.
+                                     2 ; main.c:2: nop();
+      FF0000 00               [12]   3 nop
+                           000001    4 C$main.c$5$3_0$2 ==.
+                                     5 ; main.c:5: value = get_value();
+      FF0001 9A FF 00 20      [12]   6 ecall _get_value
+      FF0005 7E 91 82         [12]   7 mov r9,dpl
+                           000008    8 C$main.c$6$3_0$2 ==.
+                                     9 ; main.c:6: use(value);
+      FF0008 7C B9            [12]  10 mov a,r9
+      FF000A 80 F5            [12]  11 sjmp loop
+"""
+        source_text = """void main(void) {
+    nop();
+    unsigned char value = 0;
+    for (;;) {
+        value = get_value();
+        use(value);
+    }
+}
+"""
+        listing.write_text(listing_text, encoding="ascii")
+        source.write_text(source_text, encoding="ascii")
+        self.assertEqual(self._convert()["register_locals"], 1)
+        data = self.output.read_bytes()
+        _, sections = _elf(data)
+        loc = _section(sections, ".debug_loc")
+        # Even on the back edge, the loop head has no guaranteed value.
+        self.assertEqual(data[loc["offset"]:loc["offset"] + loc["size"]],
+                         struct.pack(">IIH1sII", 8, 12, 1, b"\x59", 0, 0))
+
+        for assignment in ("value = other_call();", "value = get_value() + (1);"):
+            with self.subTest(assignment=assignment):
+                listing.write_text(listing_text.replace("value = get_value();", assignment),
+                                   encoding="ascii")
+                source.write_text(source_text.replace("value = get_value();", assignment),
+                                  encoding="ascii")
+                self.assertEqual(self._convert()["register_locals"], 0)
+
+    @unittest.skipUnless(STC_GDB.is_file(), "requires built stc-gdb")
+    def test_gdb_mi_register_pieces_across_call_and_restore(self):
+        from stcforge.server import serve
+        from stcforge.target import MockTarget
+
+        code = bytes.fromhex(
+            "9A FF 00 30 7E F1 82 7E E1 83 7E D1 F0 7C CB 7C BF "
+            "CA F8 CA E8 CA D8 CA C8 9A FF 00 30 DA C8 DA D8 DA E8 DA F8 "
+            "7C BF 7E C0 00 7C BF AA")
+        self.hex.write_text(_ihex_text([_ihex_record(0, 0, code)], base=0xFF0000),
+                            encoding="ascii")
+        self.cdb.write_text("""M:main
+F:G$main$0_0$0({3}DF,SV:S),C,0,0,0,0,0
+S:Lmain.main$now$3_1$2({4}SL:U),R,0,0,[r15,r14,r13,r12]
+L:G$main$0$0:FF0000
+L:XG$main$0$0:FF002C
+L:C$main.c$12$3_1$2:FF000F
+L:C$main.c$13$3_1$2:FF0025
+""", encoding="utf-8")
+        (self.root / "main.c.rst").write_text("""                           000000    1 C$main.c$11$3_1$2 ==.
+                                     2 ; main.c:11: unsigned long now = get_time();
+      FF0000 9A FF 00 30      [12]   3 ecall _get_time
+      FF0004 7E F1 82         [12]   4 mov r15,dpl
+      FF0007 7E E1 83         [12]   5 mov r14,dph
+      FF000A 7E D1 F0         [12]   6 mov r13,b
+      FF000D 7C CB            [12]   7 mov r12,a
+                           00000F    8 C$main.c$12$3_1$2 ==.
+                                     9 ; main.c:12: use(now);
+      FF000F 7C BF            [12]  10 mov a,r15
+      FF0011 CA F8            [12]  11 push r15
+      FF0013 CA E8            [12]  12 push r14
+      FF0015 CA D8            [12]  13 push r13
+      FF0017 CA C8            [12]  14 push r12
+      FF0019 9A FF 00 30      [12]  15 ecall _use
+      FF001D DA C8            [12]  16 pop r12
+      FF001F DA D8            [12]  17 pop r13
+      FF0021 DA E8            [12]  18 pop r14
+      FF0023 DA F8            [12]  19 pop r15
+                           000025   20 C$main.c$13$3_1$2 ==.
+                                    21 ; main.c:13: use_again(now);
+      FF0025 7C BF            [12]  22 mov a,r15
+      FF0027 7E C0 00         [12]  23 mov r12,#0
+      FF002A 7C BF            [12]  24 mov a,r15
+      FF002C AA               [12]  25 eret
+""", encoding="ascii")
+        self.assertEqual(self._convert()["register_locals"], 1)
+
+        points = [(0x0D, 0, 3, "<optimized out>"), (0x0F, 0, 4, str(0x12345678)),
+                  (0x1D, 4, 0, str(0x12345678)), (0x23, 1, 3, str(0x12345678)),
+                  (0x25, 0, 4, str(0x12345678)), (0x2A, 0, 0, "<optimized out>")]
+        for pc, stack_count, high_register_count, expected in points:
+            with self.subTest(pc=pc):
+                target = MockTarget()
+                target.memory.update(dict(enumerate(code, 0xFF0000)))
+                target._set_pc(0xFF0000 + pc)
+                value = bytes.fromhex("12345678")
+                target.registers[12:16] = value[:high_register_count].ljust(4, b"\xff")
+                target.registers[36:40] = (0x100 + stack_count).to_bytes(4, "big")
+                target.write_memory(0x101, value[::-1])
+                ready = queue.Queue()
+                handler = threading.Thread(target=serve, args=(target,),
+                                           kwargs=dict(port=0, once=True, ready=ready.put), daemon=True)
+                handler.start()
+                host, port = ready.get(timeout=5)
+                commands = ["1-gdb-set architecture mcs251", "2-gdb-set endian big",
+                            f'3-file-exec-and-symbols "{self.output.as_posix()}"',
+                            f"4-target-select remote {host}:{port}",
+                            "5-stack-list-variables --simple-values", "6-var-create - * now",
+                            "7-target-detach", "8-gdb-exit", ""]
+                result = subprocess.run([str(STC_GDB), "-nx", "-q", "--interpreter=mi2"],
+                                        input="\n".join(commands), text=True, capture_output=True,
+                                        timeout=15)
+                handler.join(5)
+                self.assertFalse(handler.is_alive())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f'name="now",type="unsigned long",value="{expected}"', result.stdout)
+                self.assertRegex(result.stdout, rf'6\^done,[^\n]*value="{re.escape(expected)}"')
 
     def test_conflicting_duplicate_register_is_rejected(self):
         self.cdb.write_text(_fixture_cdb() + "L:G$P0$0_0$0:81\n", encoding="utf-8")

@@ -4,9 +4,8 @@ The output is deliberately an ELF32 big-endian file with ``EM_NONE``.  A GDB
 port for MCS-251 must select its architecture explicitly; this converter does
 not pretend that the image is ARM, x86, or any other existing ELF machine.
 
-Only the pieces needed for source lines and simple integer globals are emitted.
-Unsupported CDB records are counted and reported instead of being assigned a
-guessed address.
+Provides source lines, simple integer globals and verified stack locals.
+Unsupported CDB records are counted rather than assigned guessed addresses.
 """
 
 from __future__ import annotations
@@ -19,6 +18,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .stack_symbols import (
+    SPX_REGISTER, RegisterDecl, StackDecl, call_clobbers, read_listing, register_ranges,
+    stack_ranges,
+)
 
 
 SFR_BASE = 0x10000000
@@ -72,6 +76,13 @@ class _Variable:
 
 
 @dataclass(frozen=True)
+class _Local:
+    decl: StackDecl | RegisterDecl
+    type: _IntegerType
+    locations: tuple[tuple[int, int, bytes], ...]
+
+
+@dataclass(frozen=True)
 class _Line:
     file: str
     line: int
@@ -81,12 +92,16 @@ class _Line:
 @dataclass
 class _ParsedCdb:
     function_decls: dict[tuple[str, str | None, str], str]
+    function_prototypes: set[str]
     variable_decls: dict[tuple[str, str | None, str], _VarDecl]
     starts: dict[tuple[str, str | None, str], int]
     ends: dict[tuple[str, str | None, str], int]
     lines: list[_Line]
     counters: dict[str, int]
     samples: dict[str, list[str]]
+    stack_decls: dict[StackDecl, _IntegerType]
+    register_decls: dict[RegisterDecl, _IntegerType]
+    local_scopes: dict[tuple[str, str, str], set[tuple[str, str]]]
 
 
 @dataclass(frozen=True)
@@ -259,11 +274,15 @@ def _remember_raw(target: dict[tuple[str, str | None, str], int],
 
 def _parse_cdb(path: Path) -> _ParsedCdb:
     function_decls: dict[tuple[str, str | None, str], str] = {}
+    function_prototypes: set[str] = set()
     variable_decls: dict[tuple[str, str | None, str], _VarDecl] = {}
     starts: dict[tuple[str, str | None, str], int] = {}
     ends: dict[tuple[str, str | None, str], int] = {}
     lines: list[_Line] = []
     line_set: set[_Line] = set()
+    stack_decls = {}
+    register_decls = {}
+    local_scopes: dict[tuple[str, str, str], set[tuple[str, str]]] = {}
     counters: dict[str, int] = {
         "locals": 0,
         "unknown_types": 0,
@@ -375,6 +394,23 @@ def _parse_cdb(path: Path) -> _ParsedCdb:
             fields = [field.strip() for field in tail.split(",")]
             storage = fields[0] if fields else ""
             if scope == "L":
+                name = re.fullmatch(r"(.+)\.([^.$]+)\$([^$]+)\$(\d+_\d+)\$(\d+)", rest)
+                if name:
+                    module, function, identifier, level, block = name.groups()
+                    local_scopes.setdefault((module, function, identifier), set()).add((level, block))
+                integer_type = _parse_integer_type(type_text)
+                registers = re.fullmatch(r"R,0,0,\[(r\d+(?:,r\d+)*)\]", tail)
+                if (name and integer_type and name[4].startswith("1_")
+                        and len(fields) == 3 and fields[:2] == ["B", "1"]
+                        and re.fullmatch(r"[1-9]\d*", fields[2])):
+                    stack = StackDecl(*name.groups(), int(fields[2]), integer_type.size)
+                    stack_decls[stack] = integer_type
+                    continue
+                if name and integer_type and registers:
+                    order = tuple(int(reg[1:]) for reg in registers[1].split(","))
+                    if len(order) == len(set(order)) == integer_type.size and all(r < 16 for r in order):
+                        register_decls[RegisterDecl(*name.groups(), order)] = integer_type
+                        continue
                 _bump(counters, samples, "locals", f"{rest}:{type_text}")
                 continue
             if scope not in {"G", "F"}:
@@ -385,6 +421,8 @@ def _parse_cdb(path: Path) -> _ParsedCdb:
                 _bump(counters, samples, "malformed_records", f"line {number}: {line}")
                 continue
             if "DF" in type_text or storage == "C":
+                if scope == "G" and storage == "C" and re.match(r"^\{\d+\}DF,", type_text):
+                    function_prototypes.add(name)
                 continue
             if "SX" in type_text or storage == "J":
                 _bump(counters, samples, "bit_variables", name)
@@ -446,8 +484,8 @@ def _parse_cdb(path: Path) -> _ParsedCdb:
             f"CDB symbol {module or ''}${name} is both a function and a variable"
         )
 
-    return _ParsedCdb(function_decls, variable_decls, normalized_starts, ends,
-                      lines, counters, samples)
+    return _ParsedCdb(function_decls, function_prototypes, variable_decls, normalized_starts, ends,
+                      lines, counters, samples, stack_decls, register_decls, local_scopes)
 
 
 def read_hex(path: Path) -> dict[int, int]:
@@ -583,6 +621,31 @@ def _build_functions(parsed: _ParsedCdb) -> list[_Function]:
     return functions
 
 
+def _map_functions(path: Path, parsed: _ParsedCdb, functions: list[_Function],
+                   memory: dict[int, int]) -> list[_Function]:
+    """Recover assembly function entry points declared in C, without guessing sizes."""
+    wanted = parsed.function_prototypes - {func.name for func in functions}
+    if not wanted or not path.is_file():
+        return []
+    entries: dict[str, set[int]] = {}
+    for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        match = re.fullmatch(r"\s*C:\s+([0-9A-Fa-f]{6,8})\s+_([A-Za-z_]\w*)(?:\s+\S+)?\s*", line)
+        if match and match[2] in wanted:
+            entries.setdefault(match[2], set()).add(int(match[1], 16))
+
+    recovered = []
+    for name, addresses in sorted(entries.items()):
+        if len(addresses) != 1:
+            continue
+        address = next(iter(addresses))
+        if (address not in memory
+                or any(func.address <= address < func.address + max(1, func.size)
+                       for func in functions + recovered)):
+            continue
+        recovered.append(_Function(name, None, "G", address, 0))
+    return recovered
+
+
 def _build_variables(parsed: _ParsedCdb) -> list[_Variable]:
     variables: list[_Variable] = []
     for key, decl in parsed.variable_decls.items():
@@ -690,6 +753,88 @@ def _validate_code_span(functions: list[_Function], lines: list[_Line],
             )
 
 
+def _build_locals(parsed: _ParsedCdb, functions: list[_Function],
+                  memory: dict[int, int], listings: set[Path], comp_dir: str,
+                  ) -> dict[_Function, list[_Local]]:
+    by_module: dict[str, list[Path]] = {}
+    for listing in sorted(listings):
+        module = listing.name.removesuffix(".rst").removesuffix(".c")
+        by_module.setdefault(module, []).append(listing)
+    cached = {path: read_listing(path) for paths in by_module.values() if len(paths) == 1
+              for path in paths}
+    linked_rows = {}
+    ambiguous_rows = set()
+    for rows in cached.values():
+        for addr, row in rows.items():
+            if addr in linked_rows:
+                ambiguous_rows.add(addr)
+            linked_rows[addr] = row
+    for addr in ambiguous_rows:
+        del linked_rows[addr]
+    clobbers = call_clobbers(linked_rows, memory,
+                            {func.address: func.address + func.size for func in functions})
+    source_cache: dict[Path, str | None] = {}
+    result: dict[_Function, list[_Local]] = {}
+    declarations = parsed.stack_decls | parsed.register_decls
+    for decl, integer_type in declarations.items():
+        candidates = [func for func in functions if func.name == decl.function and func.size
+                      and func.module in {None, decl.module}]
+        matching = by_module.get(decl.module, [])
+        locations = ()
+        # A non-unique module/function or overlapping CDB allocation is not
+        # sufficient to identify a local (including optimized slot reuse).
+        if (len(candidates) == len(matching) == 1
+                and len(parsed.local_scopes[decl.module, decl.function, decl.name]) == 1
+                and not any(other != decl and other.module == decl.module
+                            and other.function == decl.function
+                            and (other.name == decl.name
+                                 or (isinstance(decl, StackDecl) and isinstance(other, StackDecl)
+                                     and other.offset < decl.offset + decl.size
+                                     and decl.offset < other.offset + other.size))
+                            for other in declarations)):
+            func = candidates[0]
+            listing = matching[0]
+            inputs = func.address, func.address + func.size, cached[listing], memory
+            if isinstance(decl, StackDecl):
+                locations = tuple((start, end, bytes([0x70 + SPX_REGISTER]) + _sleb(offset))
+                                  for start, end, offset in stack_ranges(decl, *inputs))
+            else:
+                source_lines = [line for line in parsed.lines
+                                if func.address <= line.address < func.address + func.size
+                                and Path(line.file).stem == decl.module]
+                sources = {Path(comp_dir) / line.file for line in source_lines}
+                text = None
+                source_bounds = None
+                if len(sources) == 1:
+                    source = next(iter(sources))
+                    if source not in source_cache:
+                        try:
+                            source_cache[source] = source.read_text(encoding="utf-8-sig")
+                        except (OSError, UnicodeError):
+                            source_cache[source] = None
+                    text = source_cache[source]
+                    source_bounds = (min(row.line for row in source_lines),
+                                     max(row.line for row in source_lines))
+                def expression(pieces):
+                    parts = []
+                    for piece in pieces:
+                        location = (bytes([0x50 + piece.register]) if piece.spx_offset is None
+                                    else bytes([0x70 + SPX_REGISTER]) + _sleb(piece.spx_offset))
+                        parts.append(location + (b"\x93\x01" if len(pieces) > 1 else b""))
+                    return b"".join(parts)
+
+                locations = tuple((start, end, expression(pieces))
+                                  for start, end, pieces in register_ranges(decl, *inputs,
+                                                                          text, clobbers,
+                                                                          source_bounds))
+        if locations:
+            result.setdefault(func, []).append(_Local(decl, integer_type, locations))
+        else:
+            _bump(parsed.counters, parsed.samples, "locals",
+                  f"{decl.module}.{decl.function}${decl.name}: unverified location")
+    return result
+
+
 def _build_abbrev() -> bytes:
     out = bytearray()
 
@@ -732,13 +877,26 @@ def _build_abbrev() -> bytes:
         (0x0B, 0x0B),
         (0x3E, 0x0B),
     ])
+    table(5, 0x2E, 1, [  # DW_TAG_subprogram
+        (0x03, 0x08),
+        (0x11, 0x01),
+        (0x12, 0x01),
+        (0x3F, 0x0C),
+    ])
+    table(6, 0x34, 0, [
+        (0x03, 0x08),
+        (0x49, 0x13),
+        (0x02, 0x06),  # DW_AT_location, DWARF2 .debug_loc section offset
+    ])
     out.append(0)
     return bytes(out)
 
 
 def _build_debug_info(cdb: Path, variables: list[_Variable], comp_dir: str,
-                      code_start: int, code_end: int) -> bytes:
+                      code_start: int, code_end: int,
+                      locals_by_function: dict[_Function, list[_Local]]) -> tuple[bytes, bytes]:
     dies = bytearray()
+    locations = bytearray()
     dies.extend(_uleb(1))
     dies.extend(_cstring("STCForge experimental SDCC CDB converter"))
     dies.append(0x0C)  # DW_LANG_C99
@@ -748,8 +906,9 @@ def _build_debug_info(cdb: Path, variables: list[_Variable], comp_dir: str,
     dies.extend(struct.pack(">I", code_end + 1))
     dies.extend(struct.pack(">I", 0))  # .debug_line offset
 
-    type_keys = sorted({(variable.type.size, variable.type.encoding, variable.type.name)
-                        for variable in variables})
+    integer_types = ({variable.type for variable in variables}
+                     | {local.type for locals_ in locals_by_function.values() for local in locals_})
+    type_keys = sorted({(typ.size, typ.encoding, typ.name) for typ in integer_types})
     type_offsets: dict[tuple[int, int, str], int] = {}
     for key in type_keys:
         type_offsets[key] = 11 + len(dies)
@@ -773,9 +932,24 @@ def _build_debug_info(cdb: Path, variables: list[_Variable], comp_dir: str,
         if variable.scope == "G":
             dies.append(1)
 
+    for func, locals_ in sorted(locals_by_function.items(), key=lambda item: item[0].address):
+        dies.extend(_uleb(5))
+        dies.extend(_cstring(func.name))
+        dies.extend(struct.pack(">IIB", func.address, func.address + func.size, func.scope == "G"))
+        for local in sorted(locals_, key=lambda item: item.decl.name):
+            dies.extend(_uleb(6))
+            dies.extend(_cstring(local.decl.name))
+            type_key = (local.type.size, local.type.encoding, local.type.name)
+            dies.extend(struct.pack(">II", type_offsets[type_key], len(locations)))
+            for start, end, expression in local.locations:
+                locations.extend(struct.pack(">IIH", start - code_start, end - code_start,
+                                             len(expression)) + expression)
+            locations.extend(b"\x00" * 8)
+        dies.append(0)
+
     dies.append(0)  # end of CU children
     body = struct.pack(">H", 2) + struct.pack(">I", 0) + bytes([4]) + bytes(dies)
-    return struct.pack(">I", len(body)) + body
+    return struct.pack(">I", len(body)) + body, bytes(locations)
 
 
 def _build_debug_line(lines: list[_Line]) -> bytes:
@@ -858,7 +1032,8 @@ def _elf_symbols(cdb_name: str, functions: list[_Function],
 
 
 def _build_elf(text: bytes, text_address: int, abbrev: bytes, info: bytes,
-               line: bytes, symbols: list[_ElfSymbol], first_global: int) -> bytes:
+               line: bytes, symbols: list[_ElfSymbol], first_global: int,
+               locations: bytes = b"") -> bytes:
     strtab = bytearray(b"\x00")
     name_offsets: dict[str, int] = {"": 0}
     for symbol in symbols:
@@ -875,6 +1050,8 @@ def _build_elf(text: bytes, text_address: int, abbrev: bytes, info: bytes,
 
     section_names = [".text", ".debug_abbrev", ".debug_info", ".debug_line",
                      ".symtab", ".strtab", ".shstrtab"]
+    if locations:
+        section_names.append(".debug_loc")
     shstrtab = bytearray(b"\x00")
     sh_name_offsets: dict[str, int] = {}
     for name in section_names:
@@ -894,6 +1071,7 @@ def _build_elf(text: bytes, text_address: int, abbrev: bytes, info: bytes,
     abbrev_offset = append(abbrev, 1)
     info_offset = append(info, 1)
     line_offset = append(line, 1)
+    location_offset = append(locations, 1)
     symtab_offset = append(bytes(symtab), 4)
     strtab_offset = append(bytes(strtab), 1)
     shstrtab_offset = append(bytes(shstrtab), 1)
@@ -919,6 +1097,8 @@ def _build_elf(text: bytes, text_address: int, abbrev: bytes, info: bytes,
         section_header(".strtab", 3, 0, 0, strtab_offset, len(strtab)),
         section_header(".shstrtab", 3, 0, 0, shstrtab_offset, len(shstrtab)),
     ]
+    if locations:
+        headers.append(section_header(".debug_loc", 1, 0, 0, location_offset, len(locations)))
     blob.extend(b"".join(headers))
 
     ident = b"\x7fELF" + bytes([1, 2, 1, 0, 0]) + b"\x00" * 7
@@ -940,10 +1120,10 @@ def _source_comp_dir(source_root: Path | None) -> str:
 def _make_limitations(counters: dict[str, int]) -> list[str]:
     limitations = [
         "调试信息由 STCForge experimental 转换器生成，不代表完整 CDB 支持。",
-        "仅生成基本整数全局变量；指针、数组、结构体、联合体、浮点和位变量不会生成。",
-        "局部变量和函数参数不生成 DWARF DIE，只在跳过统计中计数。",
+        "支持基本整型全局变量和经汇编列表验证的栈、寄存器局部变量；不支持复杂类型。",
+        "不为参数或无法验证位置的局部变量生成位置。",
         "S:C 宏/常量记录不映射，不猜测其地址。",
-        "函数通过 .symtab 和 .debug_line 提供，不生成 DW_TAG_subprogram、调用参数 DIE 或栈展开信息。",
+        "局部变量仅用于当前函数栈帧；不生成调用栈展开信息。",
         "SFR 只使用 GDB 虚拟地址 0x10000000+raw，不代表芯片具有 32 位物理地址总线。",
         "已知但未使用的 L:A 汇编地址记录和 L:L 局部地址记录不计入损坏记录。",
     ]
@@ -989,7 +1169,8 @@ def _resolve_sources(lines: list[_Line], source_dirs: list[Path]) -> list[_Line]
 
 def convert(cdb: Path, hex: Path, output: Path,
             source_root: Path | None = None,
-            source_dirs: list[Path] | None = None) -> dict[str, Any]:
+            source_dirs: list[Path] | None = None,
+            listing_dirs: list[Path] | None = None) -> dict[str, Any]:
     """Convert one SDCC CDB/HEX pair into a minimal ELF32 debug image.
 
     Args:
@@ -998,6 +1179,7 @@ def convert(cdb: Path, hex: Path, output: Path,
         output: Destination ELF path.
         source_root: Optional directory used as DWARF ``DW_AT_comp_dir``.
         source_dirs: Explicit source directories; resolve CDB file names uniquely.
+        listing_dirs: Additional directories searched recursively for linked .rst files.
 
     Returns:
         A JSON-serializable summary dictionary.  The function raises
@@ -1017,6 +1199,8 @@ def convert(cdb: Path, hex: Path, output: Path,
     if source_dirs:
         parsed.lines = _resolve_sources(parsed.lines, source_dirs)
     functions = _build_functions(parsed)
+    map_functions = _map_functions(cdb.with_suffix(".map"), parsed, functions, memory)
+    functions.extend(map_functions)
     variables = _build_variables(parsed)
     variables = _filter_ambiguous_file_statics(parsed, variables)
     _check_global_collisions(functions, variables)
@@ -1024,11 +1208,16 @@ def convert(cdb: Path, hex: Path, output: Path,
     code_start, code_end, text, hex_code_bytes = _make_text(memory)
     _validate_code_span(functions, parsed.lines, code_start, code_end)
 
+    listings = set(cdb.resolve().parent.glob("*.rst"))
+    for folder in listing_dirs or []:
+        listings.update(Path(folder).resolve().rglob("*.rst"))
+    locals_by_function = _build_locals(parsed, functions, memory, listings, comp_dir)
     abbrev = _build_abbrev()
-    info = _build_debug_info(cdb, variables, comp_dir, code_start, code_end)
+    info, locations = _build_debug_info(cdb, variables, comp_dir, code_start, code_end,
+                                        locals_by_function)
     line = _build_debug_line(parsed.lines)
     symbols, first_global = _elf_symbols(cdb.name, functions, variables, code_start)
-    elf = _build_elf(text, code_start, abbrev, info, line, symbols, first_global)
+    elf = _build_elf(text, code_start, abbrev, info, line, symbols, first_global, locations)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(elf)
@@ -1062,10 +1251,15 @@ def convert(cdb: Path, hex: Path, output: Path,
             "hex_bytes": hex_code_bytes,
         },
         "functions": len(functions),
+        "map_functions": len(map_functions),
         "globals": sum(variable.scope == "G" for variable in variables),
         "file_statics": sum(variable.scope == "F" for variable in variables),
         "sfr": sum(variable.storage == "I" for variable in variables),
         "variables": len(variables),
+        "stack_locals": sum(isinstance(local.decl, StackDecl)
+                            for items in locals_by_function.values() for local in items),
+        "register_locals": sum(isinstance(local.decl, RegisterDecl)
+                               for items in locals_by_function.values() for local in items),
         "lines": len(parsed.lines),
         "files": len(files),
         "known_ignored": {
@@ -1096,9 +1290,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--source-dir", type=Path, action="append", default=[])
+    parser.add_argument("--listing-dir", type=Path, action="append", default=[])
     args = parser.parse_args(argv)
     try:
-        result = convert(args.cdb, args.hex, args.output, args.source_root, args.source_dir)
+        result = convert(args.cdb, args.hex, args.output, args.source_root, args.source_dir,
+                         args.listing_dir)
     except (OSError, ValueError) as error:
         print(f"symbol conversion failed: {error}", file=sys.stderr)
         return 2

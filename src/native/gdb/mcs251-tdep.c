@@ -55,6 +55,83 @@ static const frame_unwind no_unwinder = {
   "mcs251-unavailable", NORMAL_FRAME, stop_unwind, frame_id, prev_reg,
   nullptr, default_frame_sniffer, nullptr, nullptr
 };
+
+struct entry_call_frame
+{
+  CORE_ADDR caller_pc;
+  CORE_ADDR caller_sp;
+};
+
+static int entry_call_sniffer (const frame_unwind *, const frame_info_ptr &f,
+                              void **cache)
+{
+  /* At a direct call's destination no callee instruction has run.  Only
+     expose a caller if both the return record and the call opcode agree.  */
+  if (frame_relative_level (f) != 0)
+    return 0;
+  CORE_ADDR pc = get_frame_pc (f);
+  if (pc == 0 || get_frame_func (f) != pc)
+    return 0;
+
+  CORE_ADDR sp = get_frame_register_unsigned (f, 25);
+  gdb_byte stack[3], code[5];
+  if (sp < 3 || sp > 0x3fff
+      || !safe_frame_unwind_memory (f, sp - 2, stack))
+    return 0;
+
+  CORE_ADDR far_return = (stack[0] << 16) | (stack[1] << 8) | stack[2];
+  CORE_ADDR near_return = (pc & 0xff0000) | (stack[2] << 8) | stack[1];
+  CORE_ADDR resume = 0, caller_sp = 0;
+  if (far_return >= 4
+      && safe_frame_unwind_memory (f, far_return - 4,
+                                   gdb::make_array_view (code, 4))
+      && code[0] == 0x9a
+      && pc == CORE_ADDR ((code[1] << 16) | (code[2] << 8) | code[3]))
+    {
+      resume = far_return;
+      caller_sp = sp - 3;
+    }
+  else if (near_return >= 3
+           && safe_frame_unwind_memory (f, near_return - 3,
+                                        gdb::make_array_view (code, 3))
+           && code[0] == 0x12 && (pc & 0xffff) == ((code[1] << 8) | code[2]))
+    {
+      resume = near_return;
+      caller_sp = sp - 2;
+    }
+  else if (near_return >= 2
+           && safe_frame_unwind_memory (f, near_return - 2,
+                                        gdb::make_array_view (code, 2))
+           && (code[0] & 0x1f) == 0x11
+           && pc == ((near_return & 0xfff800) | ((code[0] & 0xe0) << 3)
+                     | code[1]))
+    {
+      resume = near_return;
+      caller_sp = sp - 2;
+    }
+  if (resume == 0 || get_pc_function_start (resume - 1) == pc)
+    return 0;
+  auto *entry = FRAME_OBSTACK_ZALLOC (entry_call_frame);
+  entry->caller_pc = resume;
+  entry->caller_sp = caller_sp;
+  *cache = entry;
+  return 1;
+}
+
+static value *entry_call_prev_reg (const frame_info_ptr &f, void **cache, int n)
+{
+  auto *entry = static_cast<entry_call_frame *> (*cache);
+  if (n == 28)
+    return frame_unwind_got_constant (f, n, entry->caller_pc);
+  if (n == 25)
+    return frame_unwind_got_constant (f, n, entry->caller_sp);
+  return prev_reg (f, cache, n);
+}
+
+static const frame_unwind entry_call_unwinder = {
+  "mcs251-direct-call-entry", NORMAL_FRAME, default_frame_unwind_stop_reason,
+  frame_id, entry_call_prev_reg, nullptr, entry_call_sniffer, nullptr, nullptr
+};
 constexpr gdb_byte break_insn[] = { 0xb9 };
 typedef BP_MANIPULATION (break_insn) mcs251_breakpoint;
 
@@ -158,6 +235,7 @@ static gdbarch *mcs251_init (gdbarch_info info, gdbarch_list *arches)
   set_gdbarch_decr_pc_after_break(a, 0);
   set_gdbarch_print_insn(a, print_insn_mcs251);
   if (description) tdesc_use_registers(a, info.target_desc, std::move(description));
+  frame_unwind_append_unwinder(a, &entry_call_unwinder);
   frame_unwind_append_unwinder(a, &no_unwinder);
   return a;
 }

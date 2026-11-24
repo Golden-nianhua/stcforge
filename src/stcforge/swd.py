@@ -5,7 +5,7 @@ import os
 import time
 
 from .ice import IceDisconnectedError, IceError, IceTimeoutError, ProtocolError, State
-from .target import Target, region_for
+from .target import REGIONS, Region, Target, region_for
 from .transport import HidTransport, TransportDisconnected, TransportError, TransportTimeout
 
 LOG = logging.getLogger(__name__)
@@ -22,6 +22,31 @@ SLOTS = 8
 # STCMON251.DLL sends the Speed dropdown index with CONNECT.
 SWD_SPEED_CODES = {1000: 0, 600: 1, 300: 2, 100: 3}
 DEFAULT_SWD_SPEED_KHZ = 600
+IE_SFR, EA_MASK = 0xa8, 0x80
+BIT_OPERAND_OPCODES = {0x10, 0x20, 0x30, 0x72, 0x82, 0x92, 0xa0, 0xa2,
+                       0xb0, 0xb2, 0xc2, 0xd2}
+DIRECT_OPERAND_OPCODES = {0x05, 0x15, 0x25, 0x35, 0x42, 0x43, 0x45, 0x52,
+                          0x53, 0x55, 0x62, 0x63, 0x65, 0x75, 0x86, 0x87,
+                          *range(0x88, 0x90), 0x95, *range(0xa6, 0xb0),
+                          0xb5, 0xc0, 0xc5, 0xd0, 0xd5, 0xe5, 0xf5}
+
+
+def _may_access_ie(instruction):
+    # SDCC uses the MCS-251 source map (A5 escapes the legacy column).
+    if instruction[:1] == b"\xa5":
+        instruction = instruction[1:]
+    elif instruction and instruction[0] & 0x0f >= 6:
+        # Conservatively leave EA alone for extended instructions whose operand
+        # encoding could name IE. No instruction decoding is needed to step them.
+        return IE_SFR in instruction[2:]
+    if len(instruction) < 2:
+        return False
+    opcode, operand = instruction[:2]
+    if opcode in BIT_OPERAND_OPCODES:
+        return operand & 0xf8 == IE_SFR
+    if opcode == 0x85:  # MOV direct,direct has two direct operands.
+        return IE_SFR in instruction[1:3]
+    return opcode in DIRECT_OPERAND_OPCODES and operand == IE_SFR
 
 
 def plan_code_pages(image):
@@ -304,6 +329,8 @@ class Link1DSession:
 
 
 class Link1DTarget(Target):
+    # The peripheral XFR pages use the same far XDATA commands as external RAM.
+    regions = (*REGIONS[:2], Region(0x7ef300, 0x7efeff, 2), *REGIONS[2:])
     hardware_breakpoints = True
 
     def __init__(self, session):
@@ -363,7 +390,21 @@ class Link1DTarget(Target):
         if self.running:
             raise RuntimeError("请先暂停 Link1D 目标")
         self.last_hardware_break = False
+        ie = self.session.read_memory(4, IE_SFR, 1)[0]
+        if not ie & EA_MASK:
+            self.session.step()
+            return
+        pc = self.pc
+        instruction = self.session.read_memory(5, pc, min(5, FLASH_END - pc))
+        if _may_access_ie(instruction):
+            self.session.step()
+            return
+        self.session.write_memory(4, IE_SFR, bytes([ie & ~EA_MASK]))
+        # Do not write registers after loss of communication or an unconfirmed stop.
         self.session.step()
+        current_ie = self.session.read_memory(4, IE_SFR, 1)[0]
+        if not current_ie & EA_MASK:
+            self.session.write_memory(4, IE_SFR, bytes([current_ie | EA_MASK]))
 
     def resume(self):
         if self.running:
