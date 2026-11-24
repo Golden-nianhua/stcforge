@@ -27,10 +27,12 @@ _ORDINARY = {"mov", "movx", "movc", "movh", "movz", "movs", "xch", "xchd",
 _SP_DIRECT = {"sp", "sph", "spx", "dr60", "wr62", "wr60",
               "0x81", "0x85", "129", "133"}
 _STACK_OPERAND = re.compile(r"@spx(?:([+-])(0x[0-9a-f]+|\d+))?")
+_BYTE_SOURCE = re.compile(r"a|r(?:[0-9]|1[0-5])|#(?:0x[0-9a-f]+|\d+)")
 _C_TOKENS = re.compile(
     r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
     r'|(?m:^[ \t]*\#[^\n]*(?:\\\n[^\n]*)*)|[{}]', re.DOTALL
 )
+_C_CONDITIONAL = re.compile(r"\s*#\s*(if|ifdef|ifndef|else|elif|endif)\b")
 
 
 @dataclass(frozen=True)
@@ -130,6 +132,8 @@ def _effect(row: _Instruction) -> tuple[int, tuple[int, ...]] | None:
             if count is not None:
                 return (count if op == "inc" else -count), (end,)
         return None
+    if op == "mov" and args == ("dpx", "spx") and data == b"\x7f\xef":
+        return 0, (end,)
     if op in _ORDINARY and not any(arg in _SP_DIRECT for arg in args):
         return 0, (end,)
     return None
@@ -141,10 +145,125 @@ def _stack_store(row: _Instruction, depth: int) -> int | None:
         return None
     operand, value = row.args
     match = _STACK_OPERAND.fullmatch(operand)
-    if not match or not re.fullmatch(r"a|r(?:[0-9]|1[0-5])|#(?:0x[0-9a-f]+|\d+)", value):
+    if not match or not _BYTE_SOURCE.fullmatch(value):
         return None
     distance = int(match[2], 0) if match[2] else 0
     return depth + (-distance if match[1] == "-" else distance)
+
+
+@dataclass(frozen=True)
+class _StackAddressByte:
+    offset: int
+    index: int
+
+
+def _indirect_stack_stores(rows: list[_Instruction]) -> dict[int, int]:
+    """Track DPX when a straight-line initializer computes it from SPX."""
+    stores = {}
+    if any(_effect(row) is None or _effect(row)[1] != (row.end,) for row in rows):
+        return stores
+    if any(row.end != following.pc for row, following in zip(rows, rows[1:])):
+        return stores
+    values = {}
+    depth = 0
+    carry = None
+    dpx = ("dpl", "dph", "dpxl")
+
+    def key(operand):
+        if isinstance(operand, int):
+            return operand
+        if operand == "acc":
+            return "a"
+        if operand.startswith("ar") and operand[2:].isdigit():
+            return operand[1:]
+        if match := _STACK_OPERAND.fullmatch(operand):
+            distance = int(match[2], 0) if match[2] else 0
+            return depth + (-distance if match[1] == "-" else distance)
+        return operand
+
+    def get(operand):
+        if re.fullmatch(r"#(?:0x[0-9a-f]+|\d+)", operand):
+            return int(operand[1:], 0)
+        return values.get(key(operand))
+
+    def set_(operand, value):
+        values.pop(key(operand), None)
+        if value is not None:
+            values[key(operand)] = value
+
+    def dpx_offset():
+        first = values.get(dpx[0])
+        if isinstance(first, _StackAddressByte) and all(
+                values.get(name) == _StackAddressByte(first.offset, index)
+                for index, name in enumerate(dpx)):
+            return first.offset
+        return None
+
+    def dpx_set(offset):
+        for index, name in enumerate(dpx):
+            set_(name, None if offset is None else _StackAddressByte(offset, index))
+
+    for row in rows:
+        args, op = row.args, row.op
+        delta, _ = _effect(row)
+        if op == "mov" and args == ("dpx", "spx") and row.data == b"\x7f\xef":
+            dpx_set(depth)
+        elif (op in {"sub", "add", "inc", "dec"} and args[0] == "dpx"
+              and (len(args) == 1 or isinstance(get(args[1]), int))):
+            offset = dpx_offset()
+            amount = 1 if len(args) == 1 else get(args[1])
+            dpx_set(None if offset is None else offset + (
+                amount if op in {"add", "inc"} else -amount))
+            carry = None
+        elif op == "push":
+            set_(depth + 1, get(args[0]))
+        elif op == "pop":
+            set_(args[0], values.pop(depth, None))
+        elif op == "mov" and args[0] == "@dpx":
+            if ((offset := dpx_offset()) is not None and args[1] == "a"
+                    and row.data == b"\x7a\xeb\xb0"):
+                stores[row.pc] = offset
+                set_(offset, get(args[1]))
+            else:
+                values.clear()
+                carry = None
+        elif op == "mov" and args[0] == "dr28" and args[1] == "dpx":
+            pass
+        elif (op == "mov" and isinstance(slot := key(args[0]), int)
+              and (word := re.fullmatch(r"wr([02468]|1[024])", args[1]))
+              and len(row.data) == 4 and row.data[:2] == bytes((0x79, (int(word[1]) << 3) | 0xf))
+              and int.from_bytes(row.data[2:], "big", signed=True) == slot - depth):
+            register = int(word[1])
+            set_(slot, get(f"r{register}"))
+            set_(slot + 1, get(f"r{register + 1}"))
+        elif op == "mov" and (key(args[0]) in (*dpx, "a")
+                              or re.fullmatch(r"r(?:[0-9]|1[0-5])", args[0])
+                              or _STACK_OPERAND.fullmatch(args[0])):
+            set_(args[0], get(args[1]))
+        elif op == "clr" and args == ("a",):
+            set_("a", 0)
+        elif op in {"add", "addc"} and args[0] == "a":
+            part, amount = get(args[1]), get("a")
+            combined = None
+            if isinstance(part, _StackAddressByte):
+                if op == "add" and part.index == 0 and isinstance(amount, int):
+                    combined = _StackAddressByte(part.offset + amount, 0)
+                elif (op == "addc" and amount == 0 and carry is not None
+                      and carry[:2] == (part.offset, part.index - 1)):
+                    combined = _StackAddressByte(carry[2], part.index)
+            carry = (part.offset, part.index, combined.offset) if combined is not None else None
+            set_("a", combined)
+        elif op in {"ecall", "lcall"}:
+            # Compiler-owned outgoing saves are on the stack, not in registers.
+            values = {k: v for k, v in values.items() if isinstance(k, int) and k > 0}
+            carry = None
+        elif op in {"rl", "cpl", "inc", "dec"} and args == ("a",):
+            set_("a", None)
+        else:
+            values.clear()
+            carry = None
+        depth += delta
+    return stores
 
 
 def _verified_instructions(entry: int, end: int, rows: dict[int, _Instruction],
@@ -170,14 +289,30 @@ def stack_ranges(decl: StackDecl, entry: int, end: int,
 
     # This first version deliberately handles only initialized function-body
     # variables with dedicated, positive SPX slots, not parameters or spills.
+    assignment = re.compile(
+        rf"\b{re.escape(decl.name)}\s*(?:\[\s*\d+\s*\]|\.\s*[A-Za-z_]\w*)*\s*=(?!=)")
+
     def in_initializer(row: _Instruction) -> bool:
-        return (row.source is not None and row.source[:2] == (decl.scope, decl.block)
-                and re.search(rf"\b{re.escape(decl.name)}\s*=(?!=)", row.source[2]) is not None)
+        return (row.source is not None and row.source[1] == decl.block
+                and assignment.search(row.source[2]) is not None)
 
     init_rows = {pc for pc, row in instructions.items() if in_initializer(row)}
     if not init_rows:
         return ()
     first_init = min(init_rows)
+    indirect = {}
+    statement_entries = set()
+    statement = []
+    for row in list(instructions.values()) + [None]:
+        if (statement and (row is None or row.pc not in init_rows
+                           or row.source_line != statement[-1].source_line)):
+            found = _indirect_stack_stores(statement)
+            if found:
+                indirect.update({pc: (statement[0].pc, offset) for pc, offset in found.items()})
+                statement_entries.update(row.pc for row in statement[1:])
+            statement = []
+        if row is not None and row.pc in init_rows:
+            statement.append(row)
     # Require the usual fixed allocation at entry. This rules out storage in
     # arguments or transient pushes even when those bytes are later written.
     frame = 0
@@ -212,13 +347,19 @@ def stack_ranges(decl: StackDecl, entry: int, end: int,
             written = 0
         if pc in init_rows and depth >= slot_end:
             byte_offset = _stack_store(row, depth)
+            if byte_offset is None and pc in indirect:
+                # Indirect offsets are relative to SPX at statement start.
+                start, offset = indirect[pc]
+                if start in states:
+                    byte_offset = states[start][0] + offset
             if byte_offset is not None and decl.offset <= byte_offset <= slot_end:
                 written |= 1 << (byte_offset - decl.offset)
         next_depth = depth + delta
         if not 0 <= next_depth <= 0x3FFF:
             return ()
         for successor in successors:
-            if successor not in instructions:
+            if successor not in instructions or (successor in statement_entries
+                                                  and successor != row.end):
                 return ()
             previous = states.get(successor)
             if previous is not None and previous[0] != next_depth:
@@ -340,29 +481,29 @@ def _scope_end(text: str, line: int, initializer: str) -> int | None:
         return None
     offset = sum(map(len, lines[:line - 1]))
     open_blocks = []
+    conditionals = []
+    block = None
     for token in _C_TOKENS.finditer(text):
-        if token.start() >= offset:
+        if block is None and token.start() >= offset:
             if not open_blocks:
                 return None
             block = open_blocks[-1]
-            break
-        if token[0] == "{":
+        if directive := _C_CONDITIONAL.match(token[0]):
+            kind = directive[1]
+            if kind in {"if", "ifdef", "ifndef"}:
+                conditionals.append(len(open_blocks))
+            else:
+                # Each alternative must leave its enclosing blocks untouched.
+                if not conditionals or len(open_blocks) != conditionals[-1]:
+                    return None
+                if kind == "endif":
+                    conditionals.pop()
+        elif token[0] == "{":
             open_blocks.append(token.start())
         elif token[0] == "}":
-            if not open_blocks:
+            if len(open_blocks) <= (conditionals[-1] if conditionals else 0):
                 return None
-            open_blocks.pop()
-    else:
-        return None
-    depth = 0
-    for token in _C_TOKENS.finditer(text, block):
-        if re.match(r"\s*#\s*(?:if|ifdef|ifndef|else|elif|endif)\b", token[0]):
-            return None  # Source alternatives may have different block extents.
-        if token[0] == "{":
-            depth += 1
-        elif token[0] == "}":
-            depth -= 1
-            if not depth:
+            if open_blocks.pop() == block:
                 return text.count("\n", 0, token.start()) + 1
     return None
 
@@ -434,7 +575,7 @@ def register_ranges(decl: RegisterDecl, entry: int, end: int,
     instructions = _verified_instructions(entry, end, rows, memory)
     home = frozenset(decl.registers)
     # Match a declaration with a simple initializer, not an arbitrary write.
-    decl_prefix = rf"^\s*(?:[A-Za-z_]\w*[ \t]+)+{re.escape(decl.name)}\s*"
+    decl_prefix = rf"^\s*(?:[A-Za-z_]\w*[ \t]+)+(?:\*\s*)*{re.escape(decl.name)}\s*"
     declaration = re.compile(decl_prefix + r"=(?!=)")
     initializers = [pc for pc, row in instructions.items()
                     if row.source is not None and row.source[:2] == (decl.scope, decl.block)

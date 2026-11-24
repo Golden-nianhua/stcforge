@@ -4,7 +4,7 @@ The output is deliberately an ELF32 big-endian file with ``EM_NONE``.  A GDB
 port for MCS-251 must select its architecture explicitly; this converter does
 not pretend that the image is ARM, x86, or any other existing ELF machine.
 
-Provides source lines, simple integer globals and verified stack locals.
+Provides source lines, typed globals and verified local locations.
 Unsupported CDB records are counted rather than assigned guessed addresses.
 """
 
@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .cdb_types import CdbType, TypeTable
 from .stack_symbols import (
     SPX_REGISTER, RegisterDecl, StackDecl, call_clobbers, read_listing, register_ranges,
     stack_ranges,
@@ -39,20 +40,11 @@ class SymbolConversionError(ValueError):
 
 
 @dataclass(frozen=True)
-class _IntegerType:
-    size: int
-    code: str
-    signed: bool
-    name: str
-    encoding: int
-
-
-@dataclass(frozen=True)
 class _VarDecl:
     name: str
     module: str | None
     scope: str
-    type: _IntegerType
+    type: CdbType
     storage: str
 
 
@@ -71,14 +63,14 @@ class _Variable:
     module: str | None
     scope: str
     address: int
-    type: _IntegerType
+    type: CdbType
     storage: str
 
 
 @dataclass(frozen=True)
 class _Local:
     decl: StackDecl | RegisterDecl
-    type: _IntegerType
+    type: CdbType
     locations: tuple[tuple[int, int, bytes], ...]
 
 
@@ -99,9 +91,10 @@ class _ParsedCdb:
     lines: list[_Line]
     counters: dict[str, int]
     samples: dict[str, list[str]]
-    stack_decls: dict[StackDecl, _IntegerType]
-    register_decls: dict[RegisterDecl, _IntegerType]
+    stack_decls: dict[StackDecl, CdbType]
+    register_decls: dict[RegisterDecl, CdbType]
     local_scopes: dict[tuple[str, str, str], set[tuple[str, str]]]
+    types: TypeTable
 
 
 @dataclass(frozen=True)
@@ -145,50 +138,6 @@ def _sleb(value: int) -> bytes:
 
 def _cstring(text: str) -> bytes:
     return text.encode("utf-8") + b"\x00"
-
-
-def _parse_integer_type(text: str) -> _IntegerType | None:
-    match = re.fullmatch(r"\{(\d+)\}([A-Za-z0-9_]+)(?::([A-Za-z]))?", text)
-    if not match:
-        return None
-    size = int(match.group(1))
-    code = match.group(2).upper()
-    sign = (match.group(3) or "S").upper()
-    if sign not in {"S", "U"}:
-        return None
-
-    if code == "SC":
-        expected = 1
-        base_name = "char"
-    elif code == "SS":
-        expected = 2
-        base_name = "short"
-    elif code == "SI":
-        expected = 2
-        base_name = "int"
-    elif code == "SL":
-        expected = 4
-        base_name = "long"
-    elif code == "SB":
-        expected = 1
-        base_name = "bool"
-    else:
-        return None
-
-    if size != expected:
-        return None
-    signed = sign == "S"
-    if code == "SB":
-        signed = False
-        encoding = 0x02  # DW_ATE_boolean
-        name = "bool"
-    elif code == "SC":
-        encoding = 0x06 if signed else 0x08  # signed/unsigned char
-        name = "signed char" if signed else "unsigned char"
-    else:
-        encoding = 0x05 if signed else 0x07  # signed/unsigned
-        name = base_name if signed else f"unsigned {base_name}"
-    return _IntegerType(size, code, signed, name, encoding)
 
 
 def _static_name(scope: str, rest: str) -> tuple[str | None, str]:
@@ -299,9 +248,14 @@ def _parse_cdb(path: Path) -> _ParsedCdb:
     samples: dict[str, list[str]] = {}
 
     text = path.read_text(encoding="utf-8-sig", errors="replace")
+    types = TypeTable(text)
+    current_module = ""
     for number, raw_line in enumerate(text.splitlines(), 1):
         line = raw_line.strip()
         if not line:
+            continue
+        if line.startswith("M:"):
+            current_module = line[2:]
             continue
 
         if line.startswith("S:C"):
@@ -398,18 +352,18 @@ def _parse_cdb(path: Path) -> _ParsedCdb:
                 if name:
                     module, function, identifier, level, block = name.groups()
                     local_scopes.setdefault((module, function, identifier), set()).add((level, block))
-                integer_type = _parse_integer_type(type_text)
+                type_ = types.parse(type_text, name[1] if name else current_module)
                 registers = re.fullmatch(r"R,0,0,\[(r\d+(?:,r\d+)*)\]", tail)
-                if (name and integer_type and name[4].startswith("1_")
+                if (name and type_ and name[4].startswith("1_")
                         and len(fields) == 3 and fields[:2] == ["B", "1"]
                         and re.fullmatch(r"[1-9]\d*", fields[2])):
-                    stack = StackDecl(*name.groups(), int(fields[2]), integer_type.size)
-                    stack_decls[stack] = integer_type
+                    stack = StackDecl(*name.groups(), int(fields[2]), type_.size)
+                    stack_decls[stack] = type_
                     continue
-                if name and integer_type and registers:
+                if name and type_ and registers:
                     order = tuple(int(reg[1:]) for reg in registers[1].split(","))
-                    if len(order) == len(set(order)) == integer_type.size and all(r < 16 for r in order):
-                        register_decls[RegisterDecl(*name.groups(), order)] = integer_type
+                    if len(order) == len(set(order)) == type_.size and all(r < 16 for r in order):
+                        register_decls[RegisterDecl(*name.groups(), order)] = type_
                         continue
                 _bump(counters, samples, "locals", f"{rest}:{type_text}")
                 continue
@@ -420,22 +374,22 @@ def _parse_cdb(path: Path) -> _ParsedCdb:
             except SymbolConversionError:
                 _bump(counters, samples, "malformed_records", f"line {number}: {line}")
                 continue
-            if "DF" in type_text or storage == "C":
+            if re.match(r"^\{\d+\}DF,", type_text) or storage == "C":
                 if scope == "G" and storage == "C" and re.match(r"^\{\d+\}DF,", type_text):
                     function_prototypes.add(name)
                 continue
-            if "SX" in type_text or storage == "J":
+            if re.search(r"(?:\}|,)SX(?::[SU])?$", type_text) or storage == "J":
                 _bump(counters, samples, "bit_variables", name)
                 continue
-            integer_type = _parse_integer_type(type_text)
-            if integer_type is None:
+            type_ = types.parse(type_text, module or current_module)
+            if type_ is None:
                 _bump(counters, samples, "unknown_types", f"{name}:{type_text}")
                 continue
-            if storage not in {"I", "E", "F"}:
+            if storage not in {"I", "E", "F", "D"}:
                 _bump(counters, samples, "unsupported_storage", f"{name}:{storage}")
                 continue
             key = (scope, module, name)
-            decl = _VarDecl(name, module, scope, integer_type, storage)
+            decl = _VarDecl(name, module, scope, type_, storage)
             old = variable_decls.get(key)
             if old is None:
                 variable_decls[key] = decl
@@ -485,7 +439,7 @@ def _parse_cdb(path: Path) -> _ParsedCdb:
         )
 
     return _ParsedCdb(function_decls, function_prototypes, variable_decls, normalized_starts, ends,
-                      lines, counters, samples, stack_decls, register_decls, local_scopes)
+                      lines, counters, samples, stack_decls, register_decls, local_scopes, types)
 
 
 def read_hex(path: Path) -> dict[int, int]:
@@ -580,6 +534,8 @@ def _map_code_address(raw: int) -> int:
 
 
 def _map_storage_address(storage: str, raw: int) -> int:
+    if storage == "D":
+        return _map_code_address(raw)
     if storage == "I":
         if not 0x80 <= raw <= 0xFF:
             raise SymbolConversionError(f"SFR address 0x{raw:X} is outside 0x80..0xFF")
@@ -888,13 +844,27 @@ def _build_abbrev() -> bytes:
         (0x49, 0x13),
         (0x02, 0x06),  # DW_AT_location, DWARF2 .debug_loc section offset
     ])
+    table(7, 0x01, 1, [(0x49, 0x13)])  # DW_TAG_array_type
+    table(8, 0x21, 0, [(0x2F, 0x06)])  # DW_TAG_subrange_type, upper_bound
+    table(9, 0x0F, 0, [(0x49, 0x13), (0x0B, 0x0B)])  # DW_TAG_pointer_type
+    table(10, 0x13, 1, [(0x03, 0x08), (0x0B, 0x06)])  # DW_TAG_structure_type
+    table(11, 0x17, 1, [(0x03, 0x08), (0x0B, 0x06)])  # DW_TAG_union_type
+    member = [(0x03, 0x08), (0x49, 0x13), (0x38, 0x06)]
+    table(12, 0x0D, 0, member)  # DW_TAG_member, byte offset
+    table(13, 0x0D, 0, member + [(0x0B, 0x0B), (0x0D, 0x0B), (0x0C, 0x0B)])
+    table(14, 0x15, 0, [(0x49, 0x13)])  # DW_TAG_subroutine_type
+    table(15, 0x3B, 0, [(0x03, 0x08)])  # DW_TAG_unspecified_type (void)
+    variable = [(0x03, 0x08), (0x49, 0x13), (0x02, 0x0A)]
+    table(16, 0x34, 0, variable + [(0x3F, 0x0C)])
+    table(17, 0x34, 0, variable)
     out.append(0)
     return bytes(out)
 
 
 def _build_debug_info(cdb: Path, variables: list[_Variable], comp_dir: str,
                       code_start: int, code_end: int,
-                      locals_by_function: dict[_Function, list[_Local]]) -> tuple[bytes, bytes]:
+                      locals_by_function: dict[_Function, list[_Local]],
+                      types: TypeTable) -> tuple[bytes, bytes]:
     dies = bytearray()
     locations = bytearray()
     dies.extend(_uleb(1))
@@ -906,30 +876,70 @@ def _build_debug_info(cdb: Path, variables: list[_Variable], comp_dir: str,
     dies.extend(struct.pack(">I", code_end + 1))
     dies.extend(struct.pack(">I", 0))  # .debug_line offset
 
-    integer_types = ({variable.type for variable in variables}
-                     | {local.type for locals_ in locals_by_function.values() for local in locals_})
-    type_keys = sorted({(typ.size, typ.encoding, typ.name) for typ in integer_types})
-    type_offsets: dict[tuple[int, int, str], int] = {}
-    for key in type_keys:
-        type_offsets[key] = 11 + len(dies)
-        size, encoding, name = key
-        dies.extend(_uleb(2))
-        dies.extend(_cstring(name))
-        dies.append(size)
-        dies.append(encoding)
+    roots = dict.fromkeys([var.type for var in variables] + [
+        local.type for locals_ in locals_by_function.values() for local in locals_])
+    type_offsets: dict[CdbType, int] = {}
+    refs: list[tuple[int, CdbType]] = []
+    pending = list(roots)
+
+    def type_ref(type_: CdbType) -> None:
+        refs.append((len(dies), type_))
+        dies.extend(b"\x00" * 4)
+        if type_ not in type_offsets:
+            pending.append(type_)
+
+    # Queue dependent types independently of DIE layout so recursive pointers
+    # and forward references use the same nominal aggregate DIE.
+    for type_ in pending:
+        if type_ in type_offsets:
+            continue
+        type_offsets[type_] = 11 + len(dies)
+        kind = type_.kind
+        if kind == "base":
+            dies.extend(_uleb(2) + _cstring(type_.name) + bytes((type_.size, type_.encoding)))
+        elif kind in {"struct", "union"}:
+            dies.extend(_uleb(10 if kind == "struct" else 11) + _cstring(type_.name))
+            dies.extend(struct.pack(">I", type_.size))
+            for member in types.members(type_):
+                dies.extend(_uleb(13 if member.bit_size else 12) + _cstring(member.name))
+                type_ref(member.type)
+                dies.extend(struct.pack(">I", member.offset))
+                if member.bit_size:
+                    # CDB counts from the low bit; DWARF2 counts from the high bit.
+                    bit_offset = member.type.size * 8 - member.bit_start - member.bit_size
+                    dies.extend(bytes((member.type.size, member.bit_size, bit_offset)))
+            dies.append(0)
+        elif kind == "array":
+            dies.extend(_uleb(7))
+            type_ref(type_.target)
+            dies.extend(_uleb(8) + struct.pack(">I", type_.count - 1) + b"\x00")
+        elif kind == "pointer":
+            dies.extend(_uleb(9))
+            type_ref(type_.target)
+            dies.append(type_.size)
+        elif kind == "function":
+            dies.extend(_uleb(14))
+            type_ref(type_.target)
+        elif kind == "void":
+            dies.extend(_uleb(15) + _cstring("void"))
+        else:
+            raise SymbolConversionError(f"unsupported DWARF type {kind}")
+    for offset, type_ in refs:
+        struct.pack_into(">I", dies, offset, type_offsets[type_])
 
     for variable in sorted(variables, key=lambda item: (item.name, item.address,
                                                         item.scope)):
-        type_key = (variable.type.size, variable.type.encoding, variable.type.name)
-        dies.extend(_uleb(3 if variable.scope == "G" else 4))
+        external = variable.scope == "G"
+        scalar = variable.type.kind == "base"
+        dies.extend(_uleb((3 if external else 4) if scalar else (16 if external else 17)))
         dies.extend(_cstring(variable.name))
-        dies.extend(struct.pack(">I", type_offsets[type_key]))
+        dies.extend(struct.pack(">I", type_offsets[variable.type]))
         dies.append(5)
         dies.append(0x03)  # DW_OP_addr
         dies.extend(struct.pack(">I", variable.address))
-        dies.append(variable.type.size)
-        dies.append(variable.type.encoding)
-        if variable.scope == "G":
+        if scalar:
+            dies.extend(bytes((variable.type.size, variable.type.encoding)))
+        if external:
             dies.append(1)
 
     for func, locals_ in sorted(locals_by_function.items(), key=lambda item: item[0].address):
@@ -939,8 +949,7 @@ def _build_debug_info(cdb: Path, variables: list[_Variable], comp_dir: str,
         for local in sorted(locals_, key=lambda item: item.decl.name):
             dies.extend(_uleb(6))
             dies.extend(_cstring(local.decl.name))
-            type_key = (local.type.size, local.type.encoding, local.type.name)
-            dies.extend(struct.pack(">II", type_offsets[type_key], len(locations)))
+            dies.extend(struct.pack(">II", type_offsets[local.type], len(locations)))
             for start, end, expression in local.locations:
                 locations.extend(struct.pack(">IIH", start - code_start, end - code_start,
                                              len(expression)) + expression)
@@ -1120,7 +1129,7 @@ def _source_comp_dir(source_root: Path | None) -> str:
 def _make_limitations(counters: dict[str, int]) -> list[str]:
     limitations = [
         "调试信息由 STCForge experimental 转换器生成，不代表完整 CDB 支持。",
-        "支持基本整型全局变量和经汇编列表验证的栈、寄存器局部变量；不支持复杂类型。",
+        "支持常见 CDB 标量及复合类型；局部变量的位置须经链接后的汇编列表验证。",
         "不为参数或无法验证位置的局部变量生成位置。",
         "S:C 宏/常量记录不映射，不猜测其地址。",
         "局部变量仅用于当前函数栈帧；不生成调用栈展开信息。",
@@ -1129,7 +1138,7 @@ def _make_limitations(counters: dict[str, int]) -> list[str]:
     ]
     labels = {
         "locals": "局部变量声明",
-        "unknown_types": "未知或复合类型",
+        "unknown_types": "类型或布局无法确认",
         "bit_variables": "位变量/位寄存器",
         "unsupported_storage": "未知存储类别",
         "macros": "S:C 宏/常量",
@@ -1214,7 +1223,7 @@ def convert(cdb: Path, hex: Path, output: Path,
     locals_by_function = _build_locals(parsed, functions, memory, listings, comp_dir)
     abbrev = _build_abbrev()
     info, locations = _build_debug_info(cdb, variables, comp_dir, code_start, code_end,
-                                        locals_by_function)
+                                        locals_by_function, parsed.types)
     line = _build_debug_line(parsed.lines)
     symbols, first_global = _elf_symbols(cdb.name, functions, variables, code_start)
     elf = _build_elf(text, code_start, abbrev, info, line, symbols, first_global, locations)

@@ -191,6 +191,15 @@ static int print_insn_mcs251 (bfd_vma pc, disassemble_info *i)
   }
   return n;
 }
+/* DATA/IDATA pointers and 24-bit pointers may have the same target type.  */
+static type_instance_flags
+mcs251_address_class_type_flags (int byte_size, int dwarf2_addr_class)
+{
+  if (byte_size == 1 && dwarf2_addr_class == 0)
+    return TYPE_INSTANCE_FLAG_ADDRESS_CLASS_1;
+  return {};
+}
+
 static gdbarch *mcs251_init (gdbarch_info info, gdbarch_list *arches)
 {
   if (info.byte_order != BFD_ENDIAN_BIG) return nullptr;
@@ -214,6 +223,7 @@ static gdbarch *mcs251_init (gdbarch_info info, gdbarch_list *arches)
   set_gdbarch_long_long_bit(a, 64);
   set_gdbarch_ptr_bit(a, 24);
   set_gdbarch_addr_bit(a, 32);
+  set_gdbarch_address_class_type_flags(a, mcs251_address_class_type_flags);
   set_gdbarch_float_bit(a, 32);
   set_gdbarch_double_bit(a, 32);
   set_gdbarch_long_double_bit(a, 32);

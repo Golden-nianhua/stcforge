@@ -84,7 +84,7 @@ $sdk = "D:/Code/uv/python/cpython-3.12-windows-x86_64-none"
 cmake -S . -B .cache/build/isp -G Ninja "-DSTCFORGE_PYTHON_SDK=$sdk"
 cmake --build .cache/build/isp --target stc-isp stcforge-launcher
 uv run --no-sync python tools/package/windows_release.py --sdk $sdk
-uv run --no-sync python tools/package/smoke_windows_release.py dist/stcforge-0.1.2-windows-x64.zip
+uv run --no-sync python tools/package/smoke_windows_release.py dist/stcforge-0.1.3-windows-x64.zip
 ```
 
 GDB 暂存目录不是 `.cache/build/gdb-windows` 时，用 `--gdb` 指定。默认 ZIP 输出到 `dist/`；

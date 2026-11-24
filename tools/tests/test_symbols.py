@@ -60,7 +60,7 @@ S:G$g_xdata$0_0$0({4}SL:U),F,0,0
 S:G$P0$0_0$0({1}SC:U),I,0,0
 S:G$P0$0_0$0({1}SC:U),I,0,0
 S:G$P00$0_0$0({1}SX:S),J,0,0
-S:G$g_unknown$0_0$0({4}DA4d,SC:U),F,0,0
+S:G$g_unknown$0_0$0({4}DA3d,SC:U),F,0,0
 S:C$FOO$0_0$0({1}SC:U),I,0,0
 M:alpha
 F:Falpha$helper$0_0$0({3}DF,SV:S),C,0,0,0,0,0
@@ -624,6 +624,18 @@ L:C$main.c$6$3_0$2:FF0008
                                   encoding="ascii")
                 self.assertEqual(self._convert()["register_locals"], 0)
 
+        listing.write_text(listing_text, encoding="ascii")
+        for body, count in (
+            ("#if DEBUG\n        { marker(); }\n#else\n        fallback();\n#endif\n", 1),
+            ("#if DEBUG\n    }\n    {\n#endif\n", 0),
+        ):
+            with self.subTest(conditional=body):
+                source.write_text(
+                    source_text.replace("        use(value);\n", "        use(value);\n" + body),
+                    encoding="ascii",
+                )
+                self.assertEqual(self._convert()["register_locals"], count)
+
     @unittest.skipUnless(STC_GDB.is_file(), "requires built stc-gdb")
     def test_gdb_mi_register_pieces_across_call_and_restore(self):
         from stcforge.server import serve
@@ -701,6 +713,22 @@ L:C$main.c$13$3_1$2:FF0025
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f'name="now",type="unsigned long",value="{expected}"', result.stdout)
                 self.assertRegex(result.stdout, rf'6\^done,[^\n]*value="{re.escape(expected)}"')
+
+    def test_cdb_rejects_wrong_aggregate_sizes_and_member_layout(self):
+        from stcforge.cdb_types import TypeTable
+
+        tags = TypeTable(
+            "T:Fmain$Pair[({0}S:S$a$0_0$0({2}SI:U),Z,0,0)"
+            "({2}S:S$b$0_0$0({2}SI:U),Z,0,0)]\n"
+            "T:Fmain$Overlap[({0}S:S$a$0_0$0({2}SI:U),Z,0,0)"
+            "({1}S:S$b$0_0$0({2}SI:U),Z,0,0)]\n"
+            "T:Fmain$BadBits[({0}S:S$a$0_0$0({1}SB7$2:U),Z,0,0)]\n"
+        )
+        self.assertIsNotNone(tags.parse("{8}DA2d,STPair:S", "main"))
+        for text in ("{9}DA2d,STPair:S", "{3}STPair:S", "{3}STOverlap:S",
+                     "{1}STBadBits:S", "{1}DX,SC:U", "{3}DX,STMissing:S"):
+            with self.subTest(type=text):
+                self.assertIsNone(tags.parse(text, "main"))
 
     def test_conflicting_duplicate_register_is_rejected(self):
         self.cdb.write_text(_fixture_cdb() + "L:G$P0$0_0$0:81\n", encoding="utf-8")
